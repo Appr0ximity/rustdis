@@ -24,9 +24,6 @@
 - Geospatial commands
 - Authentication
 
-## Status
-This project is in early development. Many advanced features are still pending. Contributions and feedback are welcome!
-
 ## Getting Started
 1. Clone the repository
 2. Build with Cargo: `cargo build`
