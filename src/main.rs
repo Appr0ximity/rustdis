@@ -182,7 +182,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }else if let Some(_index) = input.find("LPOP"){
                     let mut lists_map = list_clone.lock().await;
                     if let Some(list) = lists_map.get_mut(parts[4]){
-                        list.remove(0);
+                        let removed = list.remove(0);
+                        let output = format!("${}\r\n{}\r\n", &removed.len(), removed);
+                        if let Err(_e) = stream.write_all(output.as_bytes()).await{
+                            break ;
+                        }
                     }else{
                         let output = format!("$-1\r\n");
                         if let Err(_e) = stream.write_all(output.as_bytes()).await{
