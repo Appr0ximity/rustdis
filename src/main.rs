@@ -1,16 +1,18 @@
 #![allow(unused_imports)]
-use std::{collections::HashMap, fmt::format, io::{Read, Write}, sync::Arc, thread, time::{Duration, SystemTime}};
+use std::{collections::HashMap, env::args, fmt::format, io::{Read, Write}, sync::Arc, thread, time::{Duration, SystemTime}};
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpListener, sync::Mutex};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Logs from your program will appear here!");
     let store: Arc<Mutex<HashMap<String, (String, Option<SystemTime>)>>> = Arc::new(Mutex::new(HashMap::new()));
+    let lists: Arc<Mutex<HashMap<String, Vec<String>>>> = Arc::new(Mutex::new(HashMap::new()));
     let listener = TcpListener::bind("127.0.0.1:6379").await?;
 
     loop{
         let (mut stream, _)  = listener.accept().await?;
         let store_clone = store.clone();
+        let list_clone = lists.clone();
         tokio::spawn(async move {
             let mut buf = [0;1024];
 
@@ -23,7 +25,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         return ;
                     },
                 };
-                let input = String::from_utf8_lossy(&buf[..n]); 
+                let input = String::from_utf8_lossy(&buf[..n]);
+                let parts: Vec<&str> = input.split("\r\n").collect();
                 if let Some(index) = input.find("ECHO"){
                     if let Some(output) = input.get(index+6..){
                         if let Err(_e) = stream.write_all(output.as_bytes()).await{
@@ -36,9 +39,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         break ;
                     }
                 }else if let Some(_index) = input.find("SET"){          //*5\r\n$3\r\nSET\r\n$5\r\nhello\r\n$5\r\nworld\r\n$2\r\nPX\r\n$2\r\n10\r\n
-                    let parts: Vec<&str> = input.split("\r\n").collect();       //0.    1.    2.    3.      4.     5.     6.      7.    8.     9.   10. 
-                    let key = parts[4];
-                    let value = parts[6];
+                    let key;                                              //0.    1.    2.    3.      4.     5.     6.      7.    8.     9.   10.
+                    let value;
+                    if parts.len() >= 7{ 
+                        key = parts[4];
+                        value = parts[6];
+                    }else{
+                        break;
+                    }
 
                     if parts.len() >= 11{
                         if parts[8].eq_ignore_ascii_case("px"){
@@ -83,6 +91,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if let Err(_e) = stream.write_all(output).await{
                             break ;
                         }
+                    }
+                }else if let Some(_index) = input.find("RPUSH"){
+                    let mut lists_map = list_clone.lock().await;
+                    let mut values: Vec<String> = Vec::new();
+                    let length = parts.len();
+                    let mut index = 6;
+                    while index < length{
+                        values.push(String::from(parts[index]));
+                        index = index + 2;
+                    }
+                    lists_map.entry(parts[4].to_string())
+                        .or_insert_with(Vec::new)
+                        .extend(values);
+
+                    let output = format!(":{}\r\n", lists_map.get(parts[4]).unwrap().len());
+                    if let Err(_e) = stream.write_all(output.as_bytes()).await{
+                        break ;
                     }
                 }
             }
