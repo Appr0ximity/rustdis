@@ -1,5 +1,5 @@
 #![allow(unused_imports)]
-use std::{collections::HashMap, env::args, fmt::format, io::{Read, Write}, sync::Arc, thread, time::{Duration, SystemTime}};
+use std::{collections::HashMap, env::args, fmt::{Error, format}, io::{Read, Write}, num::ParseIntError, sync::Arc, thread, time::{Duration, SystemTime}};
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpListener, sync::Mutex};
 
 #[tokio::main]
@@ -51,7 +51,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if parts.len() >= 11{
                         if parts[8].eq_ignore_ascii_case("px"){
                             let mut map = store_clone.lock().await;
-                            let ms = parts[10].parse().unwrap();
+                            let ms = match parts[10].parse(){
+                                Ok(parsed) => parsed,
+                                Err(e) => {
+                                    eprintln!("Error while parsing: {}", e);
+                                    continue;
+                                },
+                            };
                             let expiry = SystemTime::now() + Duration::from_millis(ms);
                             map.insert(key.to_string(), (value.to_string(), Some(expiry)));
                             let output = b"+OK\r\n";
@@ -182,10 +188,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }else if let Some(_index) = input.find("LPOP"){
                     let mut lists_map = list_clone.lock().await;
                     if let Some(list) = lists_map.get_mut(parts[4]){
-                        let removed = list.remove(0);
-                        let output = format!("${}\r\n{}\r\n", &removed.len(), removed);
-                        if let Err(_e) = stream.write_all(output.as_bytes()).await{
-                            break ;
+                        if let Ok(mut iterations) = parts[6].parse::<i32>(){
+                            while iterations != 0{
+                                let removed = list.remove(0);
+                                let output = format!("${}\r\n{}\r\n", &removed.len(), removed);
+                                if let Err(_e) = stream.write_all(output.as_bytes()).await{
+                                    break ;
+                                }
+                                iterations = iterations-1;
+                            }
+                        }else {
+                            let removed = list.remove(0);
+                            let output = format!("${}\r\n{}\r\n", &removed.len(), removed);
+                            if let Err(_e) = stream.write_all(output.as_bytes()).await{
+                                break ;
+                            }
                         }
                     }else{
                         let output = format!("$-1\r\n");
