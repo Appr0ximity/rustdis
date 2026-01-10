@@ -109,6 +109,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Err(_e) = stream.write_all(output.as_bytes()).await{
                         break ;
                     }
+                }else if let Some(_index) = input.find("LRANGE"){
+                    let lists_map = list_clone.lock().await;
+
+                    let output_vec = lists_map.get(parts[4]);
+                    let start:i32 = parts[6].parse().unwrap_or(0);
+                    let end:i32 = parts[8].parse().unwrap_or(-1);
+                    match output_vec{
+                        Some(output_vec) => {
+                            let mut output: String = String::new();
+                            let len = output_vec.len() as i32;
+                            let start_index: usize = if start < 0{
+                                (len + start).max(0)
+                            }else{
+                                start.min(len)
+                            } as usize;
+                            let end_index: usize = if end < 0{
+                                (len + end).max(-1) + 1
+                            }else{
+                                (end+1).min(len)
+                            } as usize;
+                            let slice = &output_vec[start_index..end_index];
+                            output.push_str(&format!("*{}\r\n",slice.len()));
+                            for arg in slice{
+                                output.push_str(&format!("${}\r\n{}\r\n", &arg.len(), arg));
+                            }
+
+                            if let Err(_e) = stream.write_all(output.as_bytes()).await{
+                                break ;
+                            }
+                        },
+                        None => {
+                            let output = "*0\r\n";
+                            if let Err(_e) = stream.write_all(output.as_bytes()).await{
+                                break ;
+                            }
+                        }
+                    }
+
                 }
             }
         });
