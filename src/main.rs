@@ -187,28 +187,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }else if let Some(_index) = input.find("LPOP"){
                     let mut lists_map = list_clone.lock().await;
+                    let mut output = String::new();
                     if let Some(list) = lists_map.get_mut(parts[4]){
-                        if let Ok(mut iterations) = parts[6].parse::<i32>(){
-                            while iterations != 0{
+                        if parts.len() >= 7 && let Ok(mut iterations) = parts[6].parse::<i32>(){
+                            output.push_str(&format!("*{}\r\n", iterations));
+                            while !list.is_empty()  && iterations != 0{
                                 let removed = list.remove(0);
-                                let output = format!("${}\r\n{}\r\n", &removed.len(), removed);
-                                if let Err(_e) = stream.write_all(output.as_bytes()).await{
-                                    break ;
-                                }
+                                output.push_str(&format!("${}\r\n{}\r\n", &removed.len(), removed));
                                 iterations = iterations-1;
                             }
                         }else {
                             let removed = list.remove(0);
-                            let output = format!("${}\r\n{}\r\n", &removed.len(), removed);
-                            if let Err(_e) = stream.write_all(output.as_bytes()).await{
-                                break ;
-                            }
+                            output = format!("${}\r\n{}\r\n", &removed.len(), removed);
                         }
                     }else{
-                        let output = format!("$-1\r\n");
-                        if let Err(_e) = stream.write_all(output.as_bytes()).await{
-                            break ;
-                        }
+                        output = format!("$-1\r\n");
+                    }
+                    if let Err(_e) = stream.write_all(output.as_bytes()).await{
+                        break ;
                     }
                 }
             }
