@@ -1,5 +1,5 @@
 #![allow(unused_imports)]
-use std::{collections::HashMap, env::args, fmt::{Error, format}, io::{Read, Write}, num::ParseIntError, sync::Arc, thread, time::{Duration, SystemTime}};
+use std::{cmp::min, collections::HashMap, env::args, fmt::{Error, format}, io::{Read, Write}, num::ParseIntError, sync::Arc, thread, time::{Duration, SystemTime}};
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpListener, sync::Mutex, time::sleep};
 
 #[tokio::main]
@@ -187,8 +187,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }else if let Some(_index) = input.find("BLPOP"){
                     let key = parts[4].to_string();
-                    if let Ok(timeout) = parts[6].parse::<u32>(){
-                        if timeout == 0 {
+                    if let Ok(timeout) = parts[6].parse::<f64>(){
+                        if timeout == 0.0 {
                             let mut lists_map = list_clone.lock().await;
                             let output ;
                             if let Some(list) = lists_map.get_mut(&key){
@@ -235,8 +235,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     drop(lists_map);
                                 }
                             }
-                        }else{
-                            //to be implemented
+                        }else {
+                            let mut remaining_ms = (timeout * 1000.0) as u64;
+                            let mut found = false;
+                            
+                            while remaining_ms > 0 {
+                                let sleep_time = std::cmp::min(100, remaining_ms);
+                                sleep(Duration::from_millis(sleep_time as u64)).await;
+                                
+                                let mut lists_map = list_clone.lock().await;
+                                if let Some(list) = lists_map.get_mut(&key) && !list.is_empty(){
+                                    let removed = list.remove(0);
+                                    drop(lists_map);
+                                    let output = format!("*2\r\n${}\r\n{}\r\n${}\r\n{}\r\n", 
+                                        key.len(), key, removed.len(), removed);
+                                    if let Err(_e) = stream.write_all(output.as_bytes()).await{
+                                        break 'shell;
+                                    }
+                                    found = true;
+                                    break;
+                                }
+                                drop(lists_map);
+                                remaining_ms -= sleep_time;
+                            }
+                            
+                            if !found {
+                                let output = b"*-1\r\n";
+                                if let Err(_e) = stream.write_all(output).await{
+                                    break 'shell;
+                                }
+                            }
                         }
                     }else{
                         let output = format!("*-1\r\n");
