@@ -7,12 +7,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Logs from your program will appear here!");
     let store: Arc<Mutex<HashMap<String, (String, Option<SystemTime>)>>> = Arc::new(Mutex::new(HashMap::new()));
     let lists: Arc<Mutex<HashMap<String, Vec<String>>>> = Arc::new(Mutex::new(HashMap::new()));
+    let streams: Arc<Mutex<HashMap<String, Vec<(String, HashMap<String, String>)>>>> = Arc::new(Mutex::new(HashMap::new()));
     let listener = TcpListener::bind("127.0.0.1:6379").await?;
 
     loop{
         let (mut stream, _)  = listener.accept().await?;
         let store_clone = store.clone();
         let list_clone = lists.clone();
+        let stream_clone = streams.clone();
         tokio::spawn(async move {
             let mut buf = [0;1024];
 
@@ -291,6 +293,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }else{
                         output = format!("$-1\r\n");
                     }
+                    if let Err(_e) = stream.write_all(output.as_bytes()).await{
+                        break ;
+                    }
+                }else if let Some(_index) = input.find("TYPE"){
+                    let store_map = store_clone.lock().await;
+                    let lists_map = list_clone.lock().await;
+                    let streams_map = stream_clone.lock().await;
+                    let key: &str = parts[4];
+                    let output;
+                    if store_map.contains_key(key){
+                        output = format!("+string\r\n");
+                    }else if streams_map.contains_key(key){
+                        output = format!("+stream\r\n");
+                    }else if lists_map.contains_key(key){
+                        output = format!("+list\r\n");
+                    }else{
+                        output = format!("+none\r\n");
+                    }
+                    if let Err(_e) = stream.write_all(output.as_bytes()).await{
+                        break ;
+                    }
+                }else if let Some(_index) = input.find("XADD"){
+                    let stream_key = parts[4].to_string();
+                    let stream_id = parts[6].to_string();
+                    let mut fields: HashMap<String, String> = HashMap::new();
+                    for i in (8..parts.len()).step_by(4){
+                        fields.insert(parts[i].to_string(), parts[i+2].to_string());
+                    }
+                    let mut streams_map = stream_clone.lock().await;
+                    streams_map.entry(stream_key).or_default().push((stream_id.clone(), fields));
+                    let output = format!("${}\r\n{}\r\n", stream_id.len(), stream_id);
                     if let Err(_e) = stream.write_all(output.as_bytes()).await{
                         break ;
                     }
