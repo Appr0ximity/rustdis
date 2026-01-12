@@ -1,5 +1,5 @@
 #![allow(unused_imports)]
-use std::{cmp::min, collections::HashMap, env::args, fmt::{Error, format}, io::{Read, Write}, num::ParseIntError, sync::Arc, thread, time::{Duration, SystemTime}};
+use std::{cmp::min, collections::HashMap, env::args, fmt::{Error, format}, io::{Read, Write}, num::ParseIntError, sync::Arc, thread, time::{Duration, SystemTime, UNIX_EPOCH}};
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpListener, sync::Mutex, time::sleep};
 
 #[tokio::main]
@@ -319,15 +319,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let stream_key = parts[4].to_string();
                     let stream_id = parts[6].to_string();
                     let id_elements: Vec<String> = stream_id.split("-").into_iter().map(|x| x.to_string()).collect();
-                    if id_elements.len() != 2 {
+                    if id_elements.len() > 2 {
                         output = format!("-ERR Invalid ID type\r\n");
                         if let Err(_e) = stream.write_all(output.as_bytes()).await{
                             break ;
                         }
                         continue;
                     }
-                    let milliseconds_time = &id_elements[0].parse::<usize>().unwrap();
-                    if *milliseconds_time == 0 && id_elements[1] ==  "0"{
+                    if id_elements.len() == 2 && id_elements[0] == "0" && id_elements[1] ==  "0"{
                         output = format!("-ERR The ID specified in XADD must be greater than 0-0\r\n");
                         if let Err(_e) = stream.write_all(output.as_bytes()).await{
                             break ;
@@ -338,51 +337,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     for i in (8..parts.len()).step_by(4){
                         fields.insert(parts[i].to_string(), parts[i+2].to_string());
                     }
-                    let milliseconds_time = &id_elements[0].parse::<usize>().unwrap();
                     let mut streams_map = stream_clone.lock().await;
-                    if let Some(curr_stream) = streams_map.get_mut(&stream_key){
-                        if let Some((prev_stream_id, _)) = curr_stream.last(){
-                            let prev_id_elements: Vec<String> = prev_stream_id.split("-").into_iter().map(|x| x.to_string()).collect();
-                            let prev_milliseconds_time = &prev_id_elements[0].parse::<usize>().unwrap();
-                            let prev_sequence = &prev_id_elements[1].parse::<usize>().unwrap();
-                            let sequence = if id_elements[1] == "*"{
-                                if prev_milliseconds_time == milliseconds_time{
-                                    &(prev_sequence + 1)
-                                }else{
-                                    &0
-                                }
+                    if let Some(curr_stream) = streams_map.get_mut(&stream_key) && let Some((prev_stream_id, _)) = curr_stream.last(){
+                        let milliseconds_time = if id_elements[0] == "*"{
+                            &SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_millis()
+                        } else{
+                            &id_elements[0].parse::<u128>().unwrap()
+                        };
+                        let prev_id_elements: Vec<String> = prev_stream_id.split("-").into_iter().map(|x| x.to_string()).collect();
+                        let prev_milliseconds_time = &prev_id_elements[0].parse::<u128>().unwrap();
+                        let prev_sequence = &prev_id_elements[1].parse::<u128>().unwrap();
+                        let sequence = if id_elements.len() > 1 && id_elements[1] != "*"{
+                            &id_elements[1].parse::<u128>().unwrap()
+                        }else{
+                            if prev_milliseconds_time == milliseconds_time{
+                                &(prev_sequence + 1)
                             }else{
-                                &id_elements[1].parse::<usize>().unwrap()
-                            };
-                            let actual_id = format!("{}-{}", milliseconds_time, sequence);
-                            if milliseconds_time < prev_milliseconds_time {
+                                &0
+                            }
+                        };
+                        let actual_id = format!("{}-{}", milliseconds_time, sequence);
+                        if milliseconds_time < prev_milliseconds_time {
+                            output = format!("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n");
+                        }else if milliseconds_time == prev_milliseconds_time{
+                            if prev_sequence >= sequence{
                                 output = format!("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n");
-                            }else if milliseconds_time == prev_milliseconds_time{
-                                if prev_sequence >= sequence{
-                                    output = format!("-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n");
-                                }else{
-                                    curr_stream.push((actual_id.clone(), fields));
-                                    output = format!("${}\r\n{}\r\n", &actual_id.len(), actual_id);
-                                }
-                            }else {
+                            }else{
                                 curr_stream.push((actual_id.clone(), fields));
                                 output = format!("${}\r\n{}\r\n", &actual_id.len(), actual_id);
                             }
-                        }else{
-                            let sequence = if id_elements[1] == "*" {
-                                if *milliseconds_time == 0 { 1 } else { 0 }
-                            } else {
-                                id_elements[1].parse::<usize>().unwrap()
-                            };
-                            let actual_id = format!("{}-{}", milliseconds_time, sequence);
+                        }else {
                             curr_stream.push((actual_id.clone(), fields));
-                            output = format!("${}\r\n{}\r\n", actual_id.len(), actual_id);
+                            output = format!("${}\r\n{}\r\n", &actual_id.len(), actual_id);
                         }
                     }else{
-                        let sequence = if id_elements[1] == "*" {
-                            if *milliseconds_time == 0 { 1 } else { 0 }
-                        } else {
+                        let milliseconds_time = if id_elements[0] == "*"{
+                            &SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_millis()
+                        } else{
+                            &id_elements[0].parse::<u128>().unwrap()
+                        };
+                        let sequence = if id_elements.len() > 1 && id_elements[1] != "*" {
                             id_elements[1].parse::<usize>().unwrap()
+                        } else {
+                            if milliseconds_time == &0 { 1 } else { 0 }
                         };
                         let actual_id = format!("{}-{}", milliseconds_time, sequence);
                         streams_map.entry(stream_key).or_default().push((actual_id.clone(), fields));
