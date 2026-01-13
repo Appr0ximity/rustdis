@@ -397,9 +397,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         continue;
                     }
+                    //TODO: Parsing IDs and comparing it in this way works for now. But it will crash eventually.
                     let stream_key = parts[4].to_string();
                     let stream_id_from = parts[6].to_string();
-                    let stream_id_to = parts[8].to_string();
+                    let mut stream_id_to = parts[8].to_string();
+                    if stream_id_to == "+"{
+                        stream_id_to = String::from("~");
+                    }
                     let streams_map = stream_clone.lock().await;
                     let mut output_len = 0;
                     output = format!("*{}\r\n", 0);
