@@ -432,17 +432,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             break ;
                         }
                     }
-                    let mut i = 6;
-                    let mut j = parts.len()-2+parts.len()%2;
-                    let mut stream_keys = Vec::new();
-                    let mut start_ids = Vec::new();
-                    while i < j{
-                        stream_keys.push(parts[i].to_string());
-                        start_ids.push(parts[j].to_string());
-                        i = i + 2;
-                        j = j - 2;
-                    }
-                    start_ids.reverse();
+                    let mid = 6+ (parts.len() - 6)/2;
+                    let stream_keys: Vec<String> = parts[6..mid].iter().map(|x| x.to_string()).collect();
+                    let start_ids: Vec<String>= parts[mid..].iter().map(|x| x.to_string()).collect();
                     let streams_map = stream_clone.lock().await;
                     let mut all_results = Vec::new();
 
