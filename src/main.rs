@@ -417,11 +417,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     output.push_str(&format!("${}\r\n{}\r\n", entry.0.len(), entry.0));
                                     output.push_str(&format!("${}\r\n{}\r\n", entry.1.len(), entry.1));
                                 }
-
                             }
                         }
                         output.replace_range(1..2, &output_len.to_string());
                     }
+                    if let Err(_e) = stream.write_all(output.as_bytes()).await{
+                        break ;
+                    }
+                }else if let Some(_index) = input.find("XREAD"){
+                    let output ;
+                    if parts.len() < 9{
+                        output = String::from("-ERR Invalid input");
+                        if let Err(_e) = stream.write_all(output.as_bytes()).await{
+                            break ;
+                        }
+                    }
+                    let stream_key = parts[6].to_string();
+                    let start_id = parts[8].to_string();
+                    
+                    let streams_map = stream_clone.lock().await;
+                    let mut matching_entries = Vec::new();
+
+                    if let Some(streams) = streams_map.get(&stream_key){
+                        for (entry_id, entry_map) in streams{
+                            if entry_id > &start_id{
+                                matching_entries.push((entry_id, entry_map));
+                            }
+                        }
+                    }
+
+                    let output = if matching_entries.is_empty(){
+                        "$-1\r\n".to_string()
+                    }else{
+                        let mut result = format!("*1\r\n*2\r\n${}\r\n{}\r\n", stream_key.len(), stream_key);
+                        result.push_str(&format!("*{}\r\n", matching_entries.len()));
+
+                        for (entry_id, entry_map) in matching_entries{
+                            result.push_str(&format!("*2\r\n${}\r\n{}\r\n", entry_id.len(), entry_id));
+                            result.push_str(&format!("*{}\r\n", entry_map.len() * 2));
+
+                            for (key, value) in entry_map{
+                                result.push_str(&format!("${}\r\n{}\r\n", key.len(), key));
+                                result.push_str(&format!("${}\r\n{}\r\n", value.len(), value));
+                            }
+                        }
+                        result
+                    };
                     if let Err(_e) = stream.write_all(output.as_bytes()).await{
                         break ;
                     }
