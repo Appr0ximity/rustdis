@@ -388,6 +388,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Err(_e) = stream.write_all(output.as_bytes()).await{
                         break ;
                     }
+                }else if let Some(_index) = input.find("XRANGE"){
+                    let mut output;
+                    if parts.len() < 9{
+                        output = String::from("-ERR Invalid Range\r\n");
+                        if let Err(_e) = stream.write_all(output.as_bytes()).await{
+                            break ;
+                        }
+                        continue;
+                    }
+                    let stream_key = parts[4].to_string();
+                    let stream_id_from = parts[6].to_string();
+                    let stream_id_to = parts[8].to_string();
+                    let streams_map = stream_clone.lock().await;
+                    let mut output_len = 0;
+                    output = format!("*{}\r\n", 0);
+                    if let Some(stream) = streams_map.get(&stream_key){
+                        for (entry_id, entry_map) in stream{
+                            if entry_id >= &stream_id_from && entry_id <= &stream_id_to{
+                                output_len = output_len + 1;
+                                output.push_str(&format!("*2\r\n${}\r\n{}\r\n", entry_id.len(), entry_id));
+                                output.push_str(&format!("*{}\r\n",entry_map.len()*2));
+                                for entry in entry_map{
+                                    output.push_str(&format!("${}\r\n{}\r\n", entry.0.len(), entry.0));
+                                    output.push_str(&format!("${}\r\n{}\r\n", entry.1.len(), entry.1));
+                                }
+
+                            }
+                        }
+                        output.replace_range(1..2, &output_len.to_string());
+                    }
+                    if let Err(_e) = stream.write_all(output.as_bytes()).await{
+                        break ;
+                    }
                 }
             }
         });
