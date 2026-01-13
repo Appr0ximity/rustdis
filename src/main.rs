@@ -432,33 +432,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             break ;
                         }
                     }
-                    let stream_key = parts[6].to_string();
-                    let start_id = parts[8].to_string();
-                    
+                    let mut i = 6;
+                    let mut j = parts.len()-2+parts.len()%2;
+                    let mut stream_keys = Vec::new();
+                    let mut start_ids = Vec::new();
+                    while i < j{
+                        stream_keys.push(parts[i].to_string());
+                        start_ids.push(parts[j].to_string());
+                        i = i + 2;
+                        j = j - 2;
+                    }
+                    start_ids.reverse();
                     let streams_map = stream_clone.lock().await;
-                    let mut matching_entries = Vec::new();
+                    let mut all_results = Vec::new();
 
-                    if let Some(streams) = streams_map.get(&stream_key){
-                        for (entry_id, entry_map) in streams{
-                            if entry_id > &start_id{
-                                matching_entries.push((entry_id, entry_map));
+                    for (stream_key, start_id) in stream_keys.iter().zip(start_ids.iter()){
+                        let mut matching_entries = Vec::new();
+
+                        if let Some(streams) = streams_map.get(stream_key){
+                            for (entry_id, entry_map) in streams{
+                                if entry_id > start_id{
+                                    matching_entries.push((entry_id, entry_map));
+                                }
                             }
                         }
-                    }
 
-                    let output = if matching_entries.is_empty(){
+                        if !matching_entries.is_empty(){
+                            all_results.push((stream_key, matching_entries));
+                        }
+                    }
+                    let output = if all_results.is_empty(){
                         "$-1\r\n".to_string()
                     }else{
-                        let mut result = format!("*1\r\n*2\r\n${}\r\n{}\r\n", stream_key.len(), stream_key);
-                        result.push_str(&format!("*{}\r\n", matching_entries.len()));
+                        let mut result = format!("*{}\r\n", all_results.len());
 
-                        for (entry_id, entry_map) in matching_entries{
-                            result.push_str(&format!("*2\r\n${}\r\n{}\r\n", entry_id.len(), entry_id));
-                            result.push_str(&format!("*{}\r\n", entry_map.len() * 2));
+                        for (stream_key, matching_entries) in all_results{
+                            result.push_str(&format!("*2\r\n${}\r\n{}\r\n", stream_key.len(), stream_key));
+                            result.push_str(&format!("*{}\r\n", matching_entries.len()));
 
-                            for (key, value) in entry_map{
-                                result.push_str(&format!("${}\r\n{}\r\n", key.len(), key));
-                                result.push_str(&format!("${}\r\n{}\r\n", value.len(), value));
+                            for(entry_id, entry_map) in matching_entries{
+                                result.push_str(&format!("*2\r\n${}\r\n{}\r\n", entry_id.len(), entry_id));
+                                result.push_str(&format!("*{}\r\n", entry_map.len() * 2));
+
+                                for (key, value) in entry_map{
+                                    result.push_str(&format!("${}\r\n{}\r\n", key.len(), key));
+                                    result.push_str(&format!("${}\r\n{}\r\n", value.len(), value));
+                                }
                             }
                         }
                         result
