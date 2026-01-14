@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 tokio = { version = "1.49.0", features = ["full"] } # async networking
+futures = "0.3"

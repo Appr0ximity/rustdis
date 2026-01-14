@@ -1,6 +1,7 @@
 #![allow(unused_imports)]
-use std::{cmp::min, collections::HashMap, env::args, fmt::{Error, format}, io::{Read, Write}, num::ParseIntError, sync::Arc, thread, time::{Duration, SystemTime, UNIX_EPOCH}};
+use std::{cmp::min, collections::HashMap, env::args, fmt::{Error, format}, io::{Read, Write}, num::ParseIntError, sync::Arc, thread, time::{Duration, SystemTime, UNIX_EPOCH}, u64};
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpListener, sync::{Mutex, broadcast}, time::sleep};
+use futures::future::select_all;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -509,7 +510,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         drop(channels_map);
 
                         if block_millli.is_zero(){
-                            wait_for_any_receiver(receivers).await;
+                            let _ = wait_for_any_receiver(receivers).await;
                         }else{
                             let _ = tokio::time::timeout(block_millli, wait_for_any_receiver(receivers)).await;
                         }
@@ -586,8 +587,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-async fn wait_for_any_receiver(mut receivers: Vec<broadcast::Receiver<()>>) {
-    if let Some(mut rx) = receivers.pop() {
-        let _ = rx.recv().await;
+async fn wait_for_any_receiver(receivers: Vec<broadcast::Receiver<()>>) {
+    if receivers.is_empty(){
+        return ;
     }
+    let futures: Vec<_> = receivers.into_iter().map(|mut rx| Box::pin(async move{rx.recv().await})).collect();
+
+    let _ = select_all(futures).await;
 }
