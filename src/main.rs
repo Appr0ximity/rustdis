@@ -444,6 +444,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         break ;
                     }
                 }else if let Some(_index) = input.find("XREAD"){
+                    let base_id = "0-0".to_string();
                     let output ;
                     if parts.len() < 9{
                         output = String::from("-ERR Invalid input");
@@ -475,19 +476,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         continue;
                     }
 
-
                     let num_streams = remainings_args/2;
                     let stream_keys: Vec<String> = parts[parts_idx..parts_idx + num_streams].iter().map(|x| x.to_string()).collect();
-                    let start_ids: Vec<String>= parts[parts_idx + num_streams..].iter().map(|x| x.to_string()).collect();
+                    let mut start_ids: Vec<String>= parts[parts_idx + num_streams..].iter().map(|x| x.to_string()).collect();
                     let streams_map = stream_clone.lock().await;
                     let mut all_results = Vec::new();
 
-                    for (stream_key, start_id) in stream_keys.iter().zip(start_ids.iter()){
+                    for (stream_key, start_id) in stream_keys.iter().zip(start_ids.iter_mut()){
                         let mut matching_entries = Vec::new();
 
                         if let Some(streams) = streams_map.get(stream_key){
+                            if *start_id == "$"{
+                                if let Some((last_id, _)) = streams.iter().rev().next(){
+                                    *start_id = last_id.clone();
+                                }else{
+                                    *start_id = base_id.clone();
+                                }
+                            }
                             for (entry_id, entry_map) in streams{
-                                if entry_id > start_id{
+                                if entry_id > start_id && start_id != "$"{
                                     matching_entries.push((entry_id, entry_map));
                                 }
                             }
