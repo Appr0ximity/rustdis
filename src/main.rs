@@ -22,7 +22,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (mut stream, _)  = listener.accept().await?;
         let store_clone = store.clone();
         let list_clone = lists.clone();
-        let stream_clone = streams.clone();
+        let stream_clone= streams.clone();
         let stream_channels_clone = stream_channels.clone();
         tokio::spawn(async move {
             if let Some(parts) = parse_command(&mut stream).await{
@@ -37,6 +37,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             if handlers::handle_echo(&mut stream, &parts).await.is_err(){
                                 break;
                             }
+                        },
+                        "SET" => {
+                            if handlers::handle_set(&mut stream, &parts, &store_clone).await.is_err(){
+                                break;
+                            }
+                        },
+                        "GET" => {
+                            if handlers::handle_get(&mut stream, &parts, &store_clone).await.is_err(){
+                                break;
+                            }
                         }
                         _ => {
                             let _ = stream.write_all(b"-ERR Invalid input").await;
@@ -45,69 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
 
 
-
-                    if parts[0] == "ECHO"{
-                    }else if parts[0] == "PING"{}
-                    else if parts[0] == "SET"{          //*5\r\n$3\r\nSET\r\n$5\r\nhello\r\n$5\r\nworld\r\n$2\r\nPX\r\n$2\r\n10\r\n
-                        let key;                  //0.    1.    2.    3.      4.     5.     6.      7.    8.     9.   10.
-                        let value;
-                        if parts.len() >= 3{ 
-                            key = &parts[1];
-                            value = &parts[2];
-                        }else{
-                            break;
-                        }
-
-                        if parts.len() >= 5{
-                            if parts[4].eq_ignore_ascii_case("px"){
-                                let mut map = store_clone.lock().await;
-                                let ms = match parts[10].parse(){
-                                    Ok(parsed) => parsed,
-                                    Err(e) => {
-                                        eprintln!("Error while parsing: {}", e);
-                                        continue;
-                                    },
-                                };
-                                let expiry = SystemTime::now() + Duration::from_millis(ms);
-                                map.insert(key.to_string(), (value.to_string(), Some(expiry)));
-                                let output = b"+OK\r\n";
-                                if let Err(_e) = stream.write_all(output).await{
-                                    break ;
-                                }
-                            }
-                        }else{
-                            let mut map = store_clone.lock().await;
-                            map.insert(key.to_string(), (value.to_string(), None));
-                            let output = b"+OK\r\n";
-                            if let Err(_e) = stream.write_all(output).await{
-                                break ;
-                            }
-                        }
-                    }else if parts[0] == "GET"{
-                        let key = &parts[4];
-
-                        let mut map = store_clone.lock().await;
-                        if let Some((value, expiry)) = map.get(key){
-                            if let Some(exp_time) = expiry{
-                                if *exp_time < SystemTime::now(){
-                                    map.remove(key);
-                                    if let Err(e) = stream.write_all(b"$-1\r\n").await{
-                                        eprintln!("{}", e);
-                                    }
-                                    continue;
-                                }
-                            }
-                            let output = format!("${}\r\n{}\r\n", value.len(), value);
-                            if let Err(_e) = stream.write_all(output.as_bytes()).await{
-                                break ;
-                            }
-                        }else{
-                            let output = b"$-1\r\n";
-                            if let Err(_e) = stream.write_all(output).await{
-                                break ;
-                            }
-                        }
-                    }else if parts[0] == "RPUSH"{
+                    if parts[0] == "RPUSH"{
                         let mut lists_map = list_clone.lock().await;
                         let mut values: Vec<String> = Vec::new();
                         let length = parts.len();
