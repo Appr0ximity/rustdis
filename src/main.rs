@@ -26,7 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let stream_channels_clone = stream_channels.clone();
         tokio::spawn(async move {
             if let Some(parts) = parse_command(&mut stream).await{
-                'shell: loop {
+                loop {
                     match parts[0].as_str(){
                         "PING" => {
                             if handlers::handle_ping(&mut stream).await.is_err(){
@@ -47,190 +47,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             if handlers::handle_get(&mut stream, &parts, &store_clone).await.is_err(){
                                 break;
                             }
-                        }
+                        },
+                        "RPUSH" =>{
+                            if handlers::handle_rpush(&mut stream, &parts, &list_clone).await.is_err(){
+                                break;
+                            }
+                        },
+                        "LRANGE" =>{
+                            if handlers::handle_lrange(&mut stream, &parts, &list_clone).await.is_err(){
+                                break;
+                            }
+                        },
+                        "LPUSH" =>{
+                            if handlers::handle_lpush(&mut stream, &parts, &list_clone).await.is_err(){
+                                break;
+                            }
+                        },
+                        "LLEN" =>{
+                            if handlers::handle_llen(&mut stream, &parts, &list_clone).await.is_err(){
+                                break;
+                            }
+                        },
+                        "BLPOP" =>{
+                            if handlers::handle_blpop(&mut stream, &parts, &list_clone).await.is_err(){
+                                break;
+                            }
+                        },
                         _ => {
                             let _ = stream.write_all(b"-ERR Invalid input").await;
                             break;
                         }
                     }
 
-
-                    if parts[0] == "RPUSH"{
-                        let mut lists_map = list_clone.lock().await;
-                        let mut values: Vec<String> = Vec::new();
-                        let length = parts.len();
-                        let mut index = 6;
-                        while index < length{
-                            values.push(String::from(&parts[index]));
-                            index = index + 2;
-                        }
-                        lists_map.entry(parts[4].to_string())
-                            .or_insert_with(Vec::new)
-                            .extend(values);
-
-                        let output = format!(":{}\r\n", lists_map.get(&parts[4]).unwrap().len());
-                        if let Err(_e) = stream.write_all(output.as_bytes()).await{
-                            break ;
-                        }
-                    }else if parts[0] == "LRANGE"{
-                        let lists_map = list_clone.lock().await;
-
-                        let output_vec = lists_map.get(&parts[4]);
-                        let start:i32 = parts[6].parse().unwrap_or(0);
-                        let end:i32 = parts[8].parse().unwrap_or(-1);
-                        match output_vec{
-                            Some(output_vec) => {
-                                let mut output: String = String::new();
-                                let len = output_vec.len() as i32;
-                                let start_index: usize = if start < 0{
-                                    (len + start).max(0)
-                                }else{
-                                    start.min(len)
-                                } as usize;
-                                let end_index: usize = if end < 0{
-                                    (len + end).max(-1) + 1
-                                }else{
-                                    (end+1).min(len)
-                                } as usize;
-                                let slice = &output_vec[start_index..end_index];
-                                output.push_str(&format!("*{}\r\n",slice.len()));
-                                for arg in slice{
-                                    output.push_str(&format!("${}\r\n{}\r\n", &arg.len(), arg));
-                                }
-
-                                if let Err(_e) = stream.write_all(output.as_bytes()).await{
-                                    break ;
-                                }
-                            },
-                            None => {
-                                let output = "*0\r\n";
-                                if let Err(_e) = stream.write_all(output.as_bytes()).await{
-                                    break ;
-                                }
-                            }
-                        }
-
-                    }else if parts[0] == "LPUSH"{
-                        let mut lists_map = list_clone.lock().await;
-                        let mut values: Vec<String> = Vec::new();
-                        let length = parts.len();
-                        let mut index = 6;
-                        while index < length{
-                            values.push(String::from(&parts[index]));
-                            index = index + 2;
-                        }
-                        let list = lists_map.entry(parts[4].to_string()).or_insert_with(Vec::new);
-
-                        for value in values{
-                            list.insert(0, value);
-                        }
-
-                        let output = format!(":{}\r\n", lists_map.get(&parts[4]).unwrap().len());
-                        if let Err(_e) = stream.write_all(output.as_bytes()).await{
-                            break ;
-                        }
-                    }else if parts[0] == "LLEN"{
-                        let lists_map = list_clone.lock().await;
-                        if let Some(list) = lists_map.get(&parts[4]){
-                            let output = format!(":{}\r\n", list.len());
-                            if let Err(_e) = stream.write_all(output.as_bytes()).await{
-                                break ;
-                            }
-                        }else{
-                            let output = format!(":0\r\n");
-                            if let Err(_e) = stream.write_all(output.as_bytes()).await{
-                                break ;
-                            }
-                        }
-                    }else if parts[0] == "BLPOP"{
-                        let key = parts[4].to_string();
-                        if let Ok(timeout) = parts[6].parse::<f64>(){
-                            if timeout == 0.0 {
-                                let mut lists_map = list_clone.lock().await;
-                                let output ;
-                                if let Some(list) = lists_map.get_mut(&key){
-                                    if !list.is_empty(){
-                                        let removed = list.remove(0);
-                                        drop(lists_map);
-                                        output = format!("*2\r\n${}\r\n{}\r\n${}\r\n{}\r\n", &key.len(), key, &removed.len(), removed);
-                                        if let Err(_e) = stream.write_all(output.as_bytes()).await{
-                                            break ;
-                                        }
-                                    }else{
-                                        drop(lists_map);
-                                        loop{
-                                            sleep(Duration::from_millis(100)).await;
-                                            let mut lists_map = list_clone.lock().await;
-                                            if let Some(list) = lists_map.get_mut(&key) && !list.is_empty(){
-                                                let removed = list.remove(0);
-                                                let key = &key.to_string();
-                                                drop(lists_map);
-                                                output = format!("*2\r\n${}\r\n{}\r\n${}\r\n{}\r\n", &key.len(), key, &removed.len(), removed);
-                                                if let Err(_e) = stream.write_all(output.as_bytes()).await{
-                                                    break 'shell;
-                                                }
-                                                break ;
-                                            }
-                                            drop(lists_map);
-                                        }
-                                    }
-                                }else{
-                                    drop(lists_map);
-                                    loop{
-                                        sleep(Duration::from_millis(100)).await;
-                                        let mut lists_map = list_clone.lock().await;
-                                        if let Some(list) = lists_map.get_mut(&key) && !list.is_empty(){
-                                            let removed = list.remove(0);
-                                            let key = &key.to_string();
-                                            drop(lists_map);
-                                            output = format!("*2\r\n${}\r\n{}\r\n${}\r\n{}\r\n", &key.len(), key, &removed.len(), removed);
-                                            if let Err(_e) = stream.write_all(output.as_bytes()).await{
-                                                break 'shell;
-                                            }
-                                            break ;
-                                        }
-                                        drop(lists_map);
-                                    }
-                                }
-                            }else {
-                                let mut remaining_ms = (timeout * 1000.0) as u64;
-                                let mut found = false;
-                                
-                                while remaining_ms > 0 {
-                                    let sleep_time = std::cmp::min(100, remaining_ms);
-                                    sleep(Duration::from_millis(sleep_time as u64)).await;
-                                    
-                                    let mut lists_map = list_clone.lock().await;
-                                    if let Some(list) = lists_map.get_mut(&key) && !list.is_empty(){
-                                        let removed = list.remove(0);
-                                        drop(lists_map);
-                                        let output = format!("*2\r\n${}\r\n{}\r\n${}\r\n{}\r\n", 
-                                            key.len(), key, removed.len(), removed);
-                                        if let Err(_e) = stream.write_all(output.as_bytes()).await{
-                                            break 'shell;
-                                        }
-                                        found = true;
-                                        break;
-                                    }
-                                    drop(lists_map);
-                                    remaining_ms -= sleep_time;
-                                }
-                                
-                                if !found {
-                                    let output = b"*-1\r\n";
-                                    if let Err(_e) = stream.write_all(output).await{
-                                        break 'shell;
-                                    }
-                                }
-                            }
-                        }else{
-                            let output = format!("*-1\r\n");
-                            if let Err(_e) = stream.write_all(output.as_bytes()).await{
-                                break ;
-                            }
-                        }
-                    }
-                    else if parts[0] == "LPOP"{
+                    if parts[0] == "LPOP"{
                         let mut lists_map = list_clone.lock().await;
                         let mut output = String::new();
                         if let Some(list) = lists_map.get_mut(&parts[4]){
