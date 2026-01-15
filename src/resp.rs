@@ -25,3 +25,7 @@ pub fn bulk_string_array(arr: &[String])-> String{
 pub fn nil_array()-> &'static str{
     "*-1\r\n"
 }
+
+pub fn error_message(s: &str)->String{
+    format!("-{}\r\n", s)
+}

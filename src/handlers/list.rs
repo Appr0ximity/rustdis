@@ -2,65 +2,7 @@ use std::{collections::HashMap, sync::Arc, time::{Duration, SystemTime}};
 
 use tokio::{io::AsyncWriteExt, net::TcpStream, sync::Mutex, time::sleep};
 
-use crate::resp::{self, bulk_string, bulk_string_array, integer, nil_bulk, nil_array, simple_string};
-
-pub async fn handle_ping(stream: &mut TcpStream)-> Result<(), ()>{
-    match stream.write_all(b"+PONG\r\n").await {
-        Ok(_) => Ok(()),
-        Err(_) => Err(()),
-    }
-}
-
-pub async fn handle_echo(stream: &mut TcpStream, parts: &Vec<String>) -> Result<(), ()>{
-    let mut output= String::new();
-    for words in parts{
-        output.push_str(&words);
-    }
-    let resp_output = simple_string(&output);
-    match stream.write_all(resp_output.as_bytes()).await {
-        Ok(_) => Ok(()),
-        Err(_) => Err(()),
-    }
-}
-
-pub async fn handle_set(stream: &mut TcpStream, parts: &Vec<String>, store_clone: &Arc<Mutex<HashMap<String, (String, Option<SystemTime>)>>>) -> Result<(), ()>{
-    let key = parts.get(1).ok_or(())?;
-    let value= parts.get(2).ok_or(())?;
-
-    if parts.len() >= 6 && parts[3].eq_ignore_ascii_case("px"){
-        let ms = parts[5].parse().map_err(|_| ())?;
-        let mut map = store_clone.lock().await;
-        let expiry = SystemTime::now() + Duration::from_millis(ms);
-        map.insert(key.to_string(), (value.to_string(), Some(expiry)));
-    }else if parts.len() >= 3{
-        let mut map = store_clone.lock().await;
-        map.insert(key.to_string(), (value.to_string(), None));
-    }else{
-        return Err(());
-    }
-    let resp_output = simple_string("OK");
-    stream.write_all(resp_output.as_bytes()).await.map_err(|_|())
-}
-
-pub async fn handle_get(stream: &mut TcpStream, parts: &Vec<String>, store_clone: &Arc<Mutex<HashMap<String, (String, Option<SystemTime>)>>>)->Result<(), ()>{
-    let key = &parts[4];
-    let output;
-
-    let mut map = store_clone.lock().await;
-    if let Some((value, expiry)) = map.get(key){
-        if let Some(exp_time) = expiry{
-            if *exp_time < SystemTime::now(){
-                map.remove(key);
-                return stream.write_all(nil_bulk().as_bytes()).await.map_err(|_|());
-            }
-        }
-        output = value.clone();
-    }else{
-        return stream.write_all(nil_bulk().as_bytes()).await.map_err(|_|());
-    }
-    let resp_output = bulk_string(&output);
-    stream.write_all(resp_output.as_bytes()).await.map_err(|_|())
-}
+use crate::resp::{bulk_string, bulk_string_array, integer, nil_array, nil_bulk, simple_string};
 
 pub async fn handle_rpush(stream: &mut TcpStream, parts: &Vec<String>, list_clone: &Arc<Mutex<HashMap<String, Vec<String>>>>)-> Result<(), ()>{
     let mut lists_map = list_clone.lock().await;
@@ -214,17 +156,17 @@ pub async fn handle_blpop(stream: &mut TcpStream, parts: &Vec<String>, list_clon
 
 pub async fn handle_lpop(stream: &mut TcpStream, parts: &Vec<String>, list_clone: &Arc<Mutex<HashMap<String, Vec<String>>>>)-> Result<(),()>{
     let mut lists_map = list_clone.lock().await;
-    let mut resp_output ;
+    let resp_output ;
     if let Some(list) = lists_map.get_mut(&parts[1]){
-        let mut output: Vec<&str>;
+        let mut output = Vec::new();
         if parts.len() >= 4 && let Ok(mut iterations) = parts[3].parse::<i32>(){
 
             while !list.is_empty()  && iterations != 0{
                 let removed = list.remove(0);
-                // output.push(&removed);
+                output.push(removed);
                 iterations = iterations-1;
             }
-            // resp_output = bulk_string_array(output);
+            resp_output = bulk_string_array(&output);
         }else {
             let removed = list.remove(0);
             resp_output = bulk_string(&removed);
@@ -232,5 +174,30 @@ pub async fn handle_lpop(stream: &mut TcpStream, parts: &Vec<String>, list_clone
     }else{
         resp_output = nil_bulk().to_string();
     }
-    return stream.write_all(nil_array().as_bytes()).await.map_err(|_| ());
+    return stream.write_all(resp_output.as_bytes()).await.map_err(|_| ());
+}
+
+pub async fn handle_type(
+        stream: &mut TcpStream,
+        parts: &Vec<String>,
+        store_clone: &Arc<Mutex<HashMap<String, (String, Option<SystemTime>)>>>,
+        list_clone: &Arc<Mutex<HashMap<String, Vec<String>>>>,
+        stream_clone: &Arc<Mutex<HashMap<String, Vec<(String, HashMap<String, String>)>>>>
+    ) -> Result<(), ()> {
+    let store_map = store_clone.lock().await;
+    let lists_map = list_clone.lock().await;
+    let streams_map = stream_clone.lock().await;
+    let key: &str = &parts[4];
+    let output;
+    if store_map.contains_key(key){
+        output = format!("string");
+    }else if streams_map.contains_key(key){
+        output = format!("stream");
+    }else if lists_map.contains_key(key){
+        output = format!("list");
+    }else{
+        output = format!("none");
+    }
+    let resp_output = simple_string(&output);
+    return stream.write_all(resp_output.as_bytes()).await.map_err(|_| ());
 }

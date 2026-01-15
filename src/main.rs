@@ -29,47 +29,62 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 loop {
                     match parts[0].as_str(){
                         "PING" => {
-                            if handlers::handle_ping(&mut stream).await.is_err(){
+                            if handlers::string::handle_ping(&mut stream).await.is_err(){
                                 break;
                             }
                         },
                         "ECHO" => {
-                            if handlers::handle_echo(&mut stream, &parts).await.is_err(){
+                            if handlers::string::handle_echo(&mut stream, &parts).await.is_err(){
                                 break;
                             }
                         },
                         "SET" => {
-                            if handlers::handle_set(&mut stream, &parts, &store_clone).await.is_err(){
+                            if handlers::string::handle_set(&mut stream, &parts, &store_clone).await.is_err(){
                                 break;
                             }
                         },
                         "GET" => {
-                            if handlers::handle_get(&mut stream, &parts, &store_clone).await.is_err(){
+                            if handlers::string::handle_get(&mut stream, &parts, &store_clone).await.is_err(){
                                 break;
                             }
                         },
                         "RPUSH" =>{
-                            if handlers::handle_rpush(&mut stream, &parts, &list_clone).await.is_err(){
+                            if handlers::list::handle_rpush(&mut stream, &parts, &list_clone).await.is_err(){
                                 break;
                             }
                         },
                         "LRANGE" =>{
-                            if handlers::handle_lrange(&mut stream, &parts, &list_clone).await.is_err(){
+                            if handlers::list::handle_lrange(&mut stream, &parts, &list_clone).await.is_err(){
                                 break;
                             }
                         },
                         "LPUSH" =>{
-                            if handlers::handle_lpush(&mut stream, &parts, &list_clone).await.is_err(){
+                            if handlers::list::handle_lpush(&mut stream, &parts, &list_clone).await.is_err(){
                                 break;
                             }
                         },
                         "LLEN" =>{
-                            if handlers::handle_llen(&mut stream, &parts, &list_clone).await.is_err(){
+                            if handlers::list::handle_llen(&mut stream, &parts, &list_clone).await.is_err(){
                                 break;
                             }
                         },
                         "BLPOP" =>{
-                            if handlers::handle_blpop(&mut stream, &parts, &list_clone).await.is_err(){
+                            if handlers::list::handle_blpop(&mut stream, &parts, &list_clone).await.is_err(){
+                                break;
+                            }
+                        },
+                        "LPOP" =>{
+                            if handlers::list::handle_lpop(&mut stream, &parts, &list_clone).await.is_err(){
+                                break;
+                            }
+                        },
+                        "TYPE" =>{
+                            if handlers::list::handle_type(&mut stream, &parts, &store_clone, &list_clone, &stream_clone).await.is_err(){
+                                break;
+                            }
+                        },
+                        "XADD" =>{
+                            if handlers::stream::handle_xadd(&mut stream, &parts, &stream_clone, &stream_channels_clone).await.is_err(){
                                 break;
                             }
                         },
@@ -79,46 +94,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
 
-                    if parts[0] == "LPOP"{
-                        let mut lists_map = list_clone.lock().await;
-                        let mut output = String::new();
-                        if let Some(list) = lists_map.get_mut(&parts[4]){
-                            if parts.len() >= 7 && let Ok(mut iterations) = parts[6].parse::<i32>(){
-                                output.push_str(&format!("*{}\r\n", iterations));
-                                while !list.is_empty()  && iterations != 0{
-                                    let removed = list.remove(0);
-                                    output.push_str(&format!("${}\r\n{}\r\n", &removed.len(), removed));
-                                    iterations = iterations-1;
-                                }
-                            }else {
-                                let removed = list.remove(0);
-                                output = format!("${}\r\n{}\r\n", &removed.len(), removed);
-                            }
-                        }else{
-                            output = format!("$-1\r\n");
-                        }
-                        if let Err(_e) = stream.write_all(output.as_bytes()).await{
-                            break ;
-                        }
-                    }else if parts[0] == "TYPE"{
-                        let store_map = store_clone.lock().await;
-                        let lists_map = list_clone.lock().await;
-                        let streams_map = stream_clone.lock().await;
-                        let key: &str = &parts[4];
-                        let output;
-                        if store_map.contains_key(key){
-                            output = format!("+string\r\n");
-                        }else if streams_map.contains_key(key){
-                            output = format!("+stream\r\n");
-                        }else if lists_map.contains_key(key){
-                            output = format!("+list\r\n");
-                        }else{
-                            output = format!("+none\r\n");
-                        }
-                        if let Err(_e) = stream.write_all(output.as_bytes()).await{
-                            break ;
-                        }
-                    }else if parts[0] == "XADD"{
+                    if parts[0] == "XADD"{
                         let output;
                         let stream_key = parts[4].to_string();
                         let stream_id = parts[6].to_string();
