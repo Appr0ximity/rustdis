@@ -1,7 +1,5 @@
-#![allow(unused_imports)]
-use std::{cmp::min, collections::HashMap, env::args, fmt::{Error, format}, io::{Read, Write}, num::ParseIntError, sync::Arc, thread, time::{Duration, SystemTime, UNIX_EPOCH}, u64};
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpListener, sync::{Mutex, broadcast}, time::sleep};
-use futures::future::select_all;
+use std::{collections::HashMap, sync::Arc, time::SystemTime};
+use tokio::{io::AsyncWriteExt, net::TcpListener, sync::{Mutex, broadcast}};
 
 use crate::parser::parse_command;
 
@@ -90,6 +88,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         },
                         "XRANGE" =>{
                             if handlers::stream::handle_xrange(&mut stream, &parts, &stream_clone).await.is_err(){
+                                break;
+                            }
+                        },
+                        "XREAD" =>{
+                            if handlers::stream::handle_xread(&mut stream, &parts, &stream_clone, &stream_channels_clone).await.is_err(){
                                 break;
                             }
                         },

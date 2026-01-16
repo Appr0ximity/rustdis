@@ -1,6 +1,6 @@
-use std::{collections::HashMap, sync::Arc, time::{Duration, SystemTime, UNIX_EPOCH}};
+use std::{collections::HashMap, sync::Arc, time::{Duration, SystemTime, UNIX_EPOCH}, vec};
 
-use futures::{TryFutureExt, future::select_all};
+use futures::future::select_all;
 use tokio::{io::AsyncWriteExt, net::TcpStream, sync::{Mutex, broadcast}};
 
 use crate::{resp::{bulk_string, bulk_string_array, error_message, nil_array}};
@@ -50,49 +50,6 @@ pub async fn handle_xadd(
 
     let resp = bulk_string(&actual_id);
     stream.write_all(resp.as_bytes()).await.map_err(|_| ())
-}
-
-fn get_id (id_str: &str, last_entry: Option<&(String, HashMap<String, String>)>)-> Result<String, String>{
-    let parts: Vec<&str> = id_str.split('-').collect();
-    let ms_input = parts[0];
-    let seq_input = parts.get(1).copied();
-
-    let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
-
-    let ms = if ms_input == "*"{
-        now_ms
-    }else{
-        ms_input.parse().map_err(|_| "ERR Invalid milliseconds".to_string())?
-    };
-
-    let seq: u128 = if let Some(s) = seq_input{
-        if s == "*"{
-            if let Some((prev_id, _)) = last_entry{
-                let prev: Vec<&str>= prev_id.split('-').collect();
-                let prev_ms = prev[0].parse().unwrap();
-                let prev_seq: u128 = prev[1].parse().unwrap();
-                if ms == prev_ms { prev_seq + 1}else{ 0 }
-            }else{
-                if ms == 0 { 1 }else{ 0 }
-            }
-        }else{
-            s.parse().map_err(|_| "ERR Invalid sequence".to_string())?
-        }
-    }else{
-        if ms == 0 { 1 }else { 0 }
-    };
-
-    if let Some((prev_id, _)) = last_entry{
-        let prev: Vec<&str>= prev_id.split('-').collect();
-        let prev_ms: u128 = prev[0].parse().unwrap();
-        let prev_seq: u128 = prev[1].parse().unwrap();
-
-        if ms < prev_ms || (ms == prev_ms && seq <= prev_seq){
-            return Err("ERR The ID specified in XADD is equal or smaller than the target stream top item".to_string())
-        }
-
-    }
-    Ok(format!("{}-{}", ms, seq))
 }
 
 pub async fn handle_xrange(stream: &mut TcpStream, parts: &Vec<String>, stream_clone: &Arc<Mutex<HashMap<String, Vec<(String, HashMap<String, String>)>>>>)-> Result<(), ()>{
@@ -146,7 +103,7 @@ pub async fn handle_xread(
     let mut block_millli = Duration::new(0, 0);
     if parts.len() > parts_idx + 1 && parts[parts_idx].eq_ignore_ascii_case("block"){
         block_flag = true;
-        if let Ok(timeout) = parts[6].parse::<u64>(){
+        if let Ok(timeout) = parts[parts_idx + 1].parse::<u64>(){
             block_millli = Duration::from_millis(timeout);
         }
         parts_idx += 2;
@@ -173,15 +130,19 @@ pub async fn handle_xread(
         let mut matching_entries = Vec::new();
 
         if let Some(streams) = streams_map.get(stream_key){
-            if *start_id == "$"{
+            let actual_start = if *start_id == "$"{
                 if let Some((last_id, _)) = streams.iter().rev().next(){
-                    *start_id = last_id.clone();
+                    last_id.clone()
                 }else{
-                    *start_id = base_id.clone();
+                    base_id.clone()
                 }
-            }
+            }else{
+                start_id.clone()
+            };
+            let start_parsed = parse_stream_id(&actual_start);
             for (entry_id, entry_map) in streams{
-                if entry_id > start_id && start_id != "$"{
+                let entry_parsed = parse_stream_id(entry_id);
+                if entry_parsed > start_parsed{
                     matching_entries.push((entry_id, entry_map));
                 }
             }
@@ -212,12 +173,20 @@ pub async fn handle_xread(
         let streams_map = stream_clone.lock().await;
         let mut new_results = Vec::new();
 
-        for (stream_key, start_id) in stream_keys.iter().zip(start_ids.iter()){
+        for(stream_key, start_id) in stream_keys.iter().zip(start_ids.iter()){
             let mut matching_entries = Vec::new();
 
+
             if let Some(streams) = streams_map.get(stream_key){
+                let actual_start = if *start_id == "$"{
+                    streams.last().map(|(id, _)| id.clone()).unwrap_or(base_id.clone())
+                }else{
+                    start_id.clone()
+                };
+                let start_parsed = parse_stream_id(&actual_start);
                 for (entry_id, entry_map) in streams{
-                    if entry_id > start_id{
+                    let entry_parsed = parse_stream_id(entry_id);
+                    if entry_parsed > start_parsed{
                         matching_entries.push((entry_id, entry_map));
                     }
                 }
@@ -228,50 +197,93 @@ pub async fn handle_xread(
             }
         }
 
-        if new_results.is_empty(){
-            return stream.write_all(nil_array().as_bytes()).await.map_err(|_|());
-        }else{
-            return stream.write_all(return_result(&new_results).as_bytes()).await.map_err(|_| ());
-        }
-
-
+        xread_result_formatter(&new_results)
     }else if all_results.is_empty(){
-        return stream.write_all(nil_array().as_bytes()).await.map_err(|_|());
+        nil_array().to_string()
     } else{
-        return stream.write_all(return_result(&all_results).as_bytes()).await.map_err(|_| ());
+        xread_result_formatter(&all_results)
     };
+
+    stream.write_all(output.as_bytes()).await.map_err(|_| ())
 }
 
-async fn wait_for_any_receiver(receivers: Vec<broadcast::Receiver<()>>) {
-    if receivers.is_empty(){
-        return ;
+async fn wait_for_any_receiver(mut receivers: Vec<broadcast::Receiver<()>>) {
+    if receivers.is_empty() {
+        return;
     }
-    let futures: Vec<_> = receivers.into_iter().map(|mut rx| Box::pin(async move{rx.recv().await})).collect();
-
+    let futures: Vec<_> = receivers.iter_mut().map(|rx| Box::pin(rx.recv())).collect();
     let _ = select_all(futures).await;
 }
 
-fn return_result(all_results: &Vec<(String, Vec<(&String, &HashMap<String, String>)>)> )->String{
+fn get_id (id_str: &str, last_entry: Option<&(String, HashMap<String, String>)>)-> Result<String, String>{
+    let parts: Vec<&str> = id_str.split('-').collect();
+    let ms_input = parts[0];
+    let seq_input = parts.get(1).copied();
+
+    let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
+
+    let ms = if ms_input == "*"{
+        now_ms
+    }else{
+        ms_input.parse().map_err(|_| "ERR Invalid milliseconds".to_string())?
+    };
+
+    let seq: u128 = if let Some(s) = seq_input{
+        if s == "*"{
+            if let Some((prev_id, _)) = last_entry{
+                let prev: Vec<&str>= prev_id.split('-').collect();
+                let prev_ms = prev[0].parse().unwrap();
+                let prev_seq: u128 = prev[1].parse().unwrap();
+                if ms == prev_ms { prev_seq + 1}else{ 0 }
+            }else{
+                if ms == 0 { 1 }else{ 0 }
+            }
+        }else{
+            s.parse().map_err(|_| "ERR Invalid sequence".to_string())?
+        }
+    }else{
+        if ms == 0 { 1 }else { 0 }
+    };
+
+    if let Some((prev_id, _)) = last_entry{
+        let prev: Vec<&str>= prev_id.split('-').collect();
+        let prev_ms: u128 = prev[0].parse().unwrap();
+        let prev_seq: u128 = prev[1].parse().unwrap();
+
+        if ms < prev_ms || (ms == prev_ms && seq <= prev_seq){
+            return Err("ERR The ID specified in XADD is equal or smaller than the target stream top item".to_string())
+        }
+
+    }
+    Ok(format!("{}-{}", ms, seq))
+}
+
+fn xread_result_formatter(results: &Vec<(String, Vec<(&String, &HashMap<String, String>)>)> )->String{
+    if results.is_empty(){
+        return nil_array().to_string();
+    }
     let mut result_vec: Vec<String> = Vec::new();
 
-    for (stream_key, matching_entries) in all_results{
-        let mut result_stream = Vec::new();
-        result_stream.push(stream_key);
-        let mut ids_vec = Vec::new();
+    for (stream_key, matching_entries) in results{
+        let mut entries_vec= Vec::new();
         for(entry_id, entry_map) in matching_entries{
-            ids_vec.push(bulk_string(entry_id));
-            let mut elements_vec = Vec::new();
+            let mut fields_vec = Vec::new();
             for entry in *entry_map{
-                elements_vec.push(bulk_string(entry.0));
-                elements_vec.push(bulk_string(entry.1));
+                fields_vec.push(bulk_string(entry.0));
+                fields_vec.push(bulk_string(entry.1));
             }
-            let elements_resp = bulk_string_array(&elements_vec);
-            ids_vec.push(elements_resp);
+            let entry = vec![bulk_string(entry_id), bulk_string_array(&fields_vec)];
+            entries_vec.push(bulk_string_array(&entry));
         }
-        let ids_resp = bulk_string_array(&ids_vec);
-        result_stream.push(&ids_resp);
+        let stream_result = vec![bulk_string(stream_key), bulk_string_array(&entries_vec)];
+        result_vec.push(bulk_string_array(&stream_result));
     }
-    
-    // result
-    String::new()
+    bulk_string_array(&result_vec)
+}
+
+fn parse_stream_id(id: &str) -> (u128, u128) {
+    let parts: Vec<&str> = id.split('-').collect();
+    let ms = parts[0].parse().unwrap_or(0);
+    let seq = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+    (ms, seq)
 }
