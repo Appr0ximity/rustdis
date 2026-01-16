@@ -96,44 +96,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 break;
                             }
                         },
+                        "INCR" =>{
+                            if handlers::string::handle_incr(&mut stream, &parts, &store_clone).await.is_err(){
+                                break;
+                            }
+                        },
+                        "MULTI" =>{
+                            if handlers::transaction::handle_multi(&mut stream).await.is_err(){
+                                break;
+                            }
+                        },
+                        "EXEC" =>{
+                            if handlers::transaction::handle_exec(&mut stream).await.is_err(){
+                                break;
+                            }
+                        },
                         _ => {
                             let _ = stream.write_all(b"-ERR Invalid input").await;
                             break;
                         }
-                    }
-
-                    if parts[0] == "INCR"{
-                        let mut store_map = store_clone.lock().await;
-                        let output ;
-                        if parts.len() < 5{
-                            output = "-ERR Invlid input\r\n".to_string();
-                            let _ = stream.write_all(output.as_bytes()).await;
-                            continue;
-                        }
-                        let key = &parts[4];
-                        if let Some((value, _)) = store_map.get_mut(key){
-                            let num = match value.parse::<isize>(){
-                                Ok(result) => result,
-                                Err(_e) => {
-                                    output = "-ERR value is not an integer or out of range\r\n".to_string();
-                                    let _ = stream.write_all(output.as_bytes()).await;
-                                    continue;
-                                },
-                            };
-                            let num_string = (num + 1).to_string();
-                            *value = num_string;
-                            output = format!(":{}\r\n", num+1);
-                        }else{
-                            store_map.insert(parts[4].to_string(), ("1".to_string(), None));
-                            output = ":1\r\n".to_string();
-                        }
-                        let _ = stream.write_all(output.as_bytes()).await;
-                    }else if parts[0] == "MULTI"{
-                        let output = "+OK\r\n".to_string();
-                        let _ = stream.write_all(output.as_bytes()).await;
-                    }else if parts[0] == "EXEC"{
-                        let output = "-ERR EXEC without MULTI".to_string();
-                        let _ = stream.write_all(output.as_bytes());
                     }
                 }
             }

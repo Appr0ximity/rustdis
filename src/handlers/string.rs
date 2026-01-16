@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc, time::{Duration, SystemTime}};
 
 use tokio::{io::AsyncWriteExt, net::TcpStream, sync::Mutex};
 
-use crate::resp::{bulk_string, nil_bulk, simple_string};
+use crate::resp::{bulk_string, error_message, integer, nil_bulk, simple_string};
 
  
 
@@ -62,4 +62,30 @@ pub async fn handle_get(stream: &mut TcpStream, parts: &Vec<String>, store_clone
     }
     let resp_output = bulk_string(&output);
     stream.write_all(resp_output.as_bytes()).await.map_err(|_|())
+}
+
+pub async fn handle_incr(stream: &mut TcpStream, parts: &Vec<String>, store_clone: &Arc<Mutex<HashMap<String, (String, Option<SystemTime>)>>>)-> Result<(), ()>{
+    let mut store_map = store_clone.lock().await;
+    let output ;
+    if parts.len() < 2{
+        output = error_message("ERR Invlid input");
+        return stream.write_all(output.as_bytes()).await.map_err(|_| ());
+    }
+    let key = &parts[1];
+    if let Some((value, _)) = store_map.get_mut(key){
+        let num = match value.parse::<isize>(){
+            Ok(result) => result,
+            Err(_e) => {
+                output = error_message("ERR value is not an integer or out of range");
+                return stream.write_all(output.as_bytes()).await.map_err(|_| ());
+            },
+        };
+        let num_string = (num + 1).to_string();
+        *value = num_string;
+        output = integer((num+1) as i64);
+    }else{
+        store_map.insert(parts[4].to_string(), ("1".to_string(), None));
+        output = integer(1 as i64);
+    }
+    return stream.write_all(output.as_bytes()).await.map_err(|_| ());
 }
