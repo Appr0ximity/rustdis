@@ -1,9 +1,9 @@
-use std::{collections::HashMap, sync::Arc, time::{SystemTime, UNIX_EPOCH}};
+use std::{collections::HashMap, sync::Arc, time::{Duration, SystemTime, UNIX_EPOCH}};
 
-use futures::TryFutureExt;
+use futures::{TryFutureExt, future::select_all};
 use tokio::{io::AsyncWriteExt, net::TcpStream, sync::{Mutex, broadcast}};
 
-use crate::resp::{bulk_string, error_message};
+use crate::{resp::{bulk_string, bulk_string_array, error_message, nil_array}};
 
 pub async fn handle_xadd(
         stream: &mut TcpStream,
@@ -93,4 +93,185 @@ fn get_id (id_str: &str, last_entry: Option<&(String, HashMap<String, String>)>)
 
     }
     Ok(format!("{}-{}", ms, seq))
+}
+
+pub async fn handle_xrange(stream: &mut TcpStream, parts: &Vec<String>, stream_clone: &Arc<Mutex<HashMap<String, Vec<(String, HashMap<String, String>)>>>>)-> Result<(), ()>{
+    let mut output: Vec<String> = Vec::new();
+    if parts.len() < 4{
+        let resp_output = error_message("ERR Invalid Range");
+        return stream.write_all(resp_output.as_bytes()).await.map_err(|_| ())
+    }
+
+    let stream_key = parts[1].to_string();
+    let stream_id_from = parts[2].to_string();
+    let mut stream_id_to = parts[3].to_string();
+    if stream_id_to == "+"{
+        stream_id_to = String::from("~");
+    }
+    let streams_map = stream_clone.lock().await;
+    let mut resp_array  = nil_array().to_string();
+    if let Some(stream) = streams_map.get(&stream_key){
+        for (entry_id, entry_map) in stream{
+            if entry_id >= &stream_id_from && entry_id <= &stream_id_to{    //Currently comparing lexiographically which is not 100% correct. 
+                let mut stream_vec = Vec::new();
+                stream_vec.push(bulk_string(entry_id));
+                let mut elements_vec = Vec::new();
+                for entry in entry_map{
+                    elements_vec.push(bulk_string(entry.0));
+                    elements_vec.push(bulk_string(entry.1));
+                }
+                stream_vec.push(bulk_string_array(&elements_vec));
+                output.push(bulk_string_array(&stream_vec));
+            }
+        }
+        resp_array = bulk_string_array(&output);
+    }
+    stream.write_all(resp_array.as_bytes()).await.map_err(|_| ())
+}
+
+pub async fn handle_xread(
+        stream: &mut TcpStream,
+        parts: &Vec<String>,
+        stream_clone: &Arc<Mutex<HashMap<String, Vec<(String, HashMap<String, String>)>>>>,
+        stream_channels_clone: &Arc<Mutex<HashMap<String, broadcast::Sender<()>>>>
+    )->Result<(), ()>{
+    let base_id = "0-0".to_string();
+    let output ;
+    if parts.len() < 4{
+        output = "ERR Invalid input";
+        return stream.write_all(error_message(output).as_bytes()).await.map_err(|_| ());
+    }
+    let mut parts_idx = 1;
+    let mut block_flag = false;
+    let mut block_millli = Duration::new(0, 0);
+    if parts.len() > parts_idx + 1 && parts[parts_idx].eq_ignore_ascii_case("block"){
+        block_flag = true;
+        if let Ok(timeout) = parts[6].parse::<u64>(){
+            block_millli = Duration::from_millis(timeout);
+        }
+        parts_idx += 2;
+    }
+    if parts.len() <= parts_idx || !parts[parts_idx].eq_ignore_ascii_case("streams"){
+        let output = "ERR Invalid input";
+        return stream.write_all(error_message(output).as_bytes()).await.map_err(|_|());
+    }
+    parts_idx += 1;
+
+    let remainings_args = parts.len() - parts_idx;
+    if remainings_args % 2 != 0 || remainings_args == 0 {
+        let output = "ERR Invlid input";
+        return stream.write_all(error_message(output).as_bytes()).await.map_err(|_| ());
+    }
+
+    let num_streams = remainings_args/2;
+    let stream_keys: Vec<String> = parts[parts_idx..parts_idx + num_streams].iter().map(|x| x.to_string()).collect();
+    let mut start_ids: Vec<String>= parts[parts_idx + num_streams..].iter().map(|x| x.to_string()).collect();
+    let streams_map = stream_clone.lock().await;
+    let mut all_results= Vec::new();
+
+    for (stream_key, start_id) in stream_keys.iter().zip(start_ids.iter_mut()){
+        let mut matching_entries = Vec::new();
+
+        if let Some(streams) = streams_map.get(stream_key){
+            if *start_id == "$"{
+                if let Some((last_id, _)) = streams.iter().rev().next(){
+                    *start_id = last_id.clone();
+                }else{
+                    *start_id = base_id.clone();
+                }
+            }
+            for (entry_id, entry_map) in streams{
+                if entry_id > start_id && start_id != "$"{
+                    matching_entries.push((entry_id, entry_map));
+                }
+            }
+        }
+
+        if !matching_entries.is_empty(){
+            all_results.push((stream_key.clone(), matching_entries));
+        }
+    }
+    let output = if all_results.is_empty() && block_flag == true{
+        drop(streams_map);
+        let mut receivers = Vec::new();
+        let mut channels_map = stream_channels_clone.lock().await;
+
+        for stream_key in &stream_keys{
+            let tx = channels_map.entry(stream_key.clone()).or_insert_with(|| broadcast::channel(100).0);
+            receivers.push(tx.subscribe());
+        }
+
+        drop(channels_map);
+
+        if block_millli.is_zero(){
+            let _ = wait_for_any_receiver(receivers).await;
+        }else{
+            let _ = tokio::time::timeout(block_millli, wait_for_any_receiver(receivers)).await;
+        }
+
+        let streams_map = stream_clone.lock().await;
+        let mut new_results = Vec::new();
+
+        for (stream_key, start_id) in stream_keys.iter().zip(start_ids.iter()){
+            let mut matching_entries = Vec::new();
+
+            if let Some(streams) = streams_map.get(stream_key){
+                for (entry_id, entry_map) in streams{
+                    if entry_id > start_id{
+                        matching_entries.push((entry_id, entry_map));
+                    }
+                }
+            }
+
+            if !matching_entries.is_empty(){
+                new_results.push((stream_key.clone(), matching_entries));
+            }
+        }
+
+        if new_results.is_empty(){
+            return stream.write_all(nil_array().as_bytes()).await.map_err(|_|());
+        }else{
+            return stream.write_all(return_result(&new_results).as_bytes()).await.map_err(|_| ());
+        }
+
+
+    }else if all_results.is_empty(){
+        return stream.write_all(nil_array().as_bytes()).await.map_err(|_|());
+    } else{
+        return stream.write_all(return_result(&all_results).as_bytes()).await.map_err(|_| ());
+    };
+}
+
+async fn wait_for_any_receiver(receivers: Vec<broadcast::Receiver<()>>) {
+    if receivers.is_empty(){
+        return ;
+    }
+    let futures: Vec<_> = receivers.into_iter().map(|mut rx| Box::pin(async move{rx.recv().await})).collect();
+
+    let _ = select_all(futures).await;
+}
+
+fn return_result(all_results: &Vec<(String, Vec<(&String, &HashMap<String, String>)>)> )->String{
+    let mut result_vec: Vec<String> = Vec::new();
+
+    for (stream_key, matching_entries) in all_results{
+        let mut result_stream = Vec::new();
+        result_stream.push(stream_key);
+        let mut ids_vec = Vec::new();
+        for(entry_id, entry_map) in matching_entries{
+            ids_vec.push(bulk_string(entry_id));
+            let mut elements_vec = Vec::new();
+            for entry in *entry_map{
+                elements_vec.push(bulk_string(entry.0));
+                elements_vec.push(bulk_string(entry.1));
+            }
+            let elements_resp = bulk_string_array(&elements_vec);
+            ids_vec.push(elements_resp);
+        }
+        let ids_resp = bulk_string_array(&ids_vec);
+        result_stream.push(&ids_resp);
+    }
+    
+    // result
+    String::new()
 }
