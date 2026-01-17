@@ -9,14 +9,15 @@
 - Serve as a learning resource for systems programming and distributed systems
 
 ## Current Features
-- Basic key-value storage
-- Simple command parsing and response
+- **String Commands**: PING, ECHO, SET, GET, INCR
+- **List Commands**: RPUSH, LPUSH, LRANGE, LPOP, LLEN, BLPOP
+- **Stream Commands**: XADD, XRANGE, XREAD (with blocking support)
+- **Transactions**: MULTI, EXEC
+- **Utility**: TYPE command for checking data structure type
 - TCP server for client connections
+- Async concurrency with Tokio
 
 ## Planned Features (Not Yet Implemented)
-- Lists
-- Streams
-- Transactions
 - Replication
 - RDB persistence
 - Pub/Sub
