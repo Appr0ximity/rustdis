@@ -23,98 +23,100 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let stream_clone= streams.clone();
         let stream_channels_clone = stream_channels.clone();
         tokio::spawn(async move {
-            if let Some(parts) = parse_command(&mut stream).await{
-                loop {
-                    match parts[0].as_str(){
-                        "PING" => {
-                            if handlers::string::handle_ping(&mut stream).await.is_err(){
-                                break;
-                            }
-                        },
-                        "ECHO" => {
-                            if handlers::string::handle_echo(&mut stream, &parts).await.is_err(){
-                                break;
-                            }
-                        },
-                        "SET" => {
-                            if handlers::string::handle_set(&mut stream, &parts, &store_clone).await.is_err(){
-                                break;
-                            }
-                        },
-                        "GET" => {
-                            if handlers::string::handle_get(&mut stream, &parts, &store_clone).await.is_err(){
-                                break;
-                            }
-                        },
-                        "RPUSH" =>{
-                            if handlers::list::handle_rpush(&mut stream, &parts, &list_clone).await.is_err(){
-                                break;
-                            }
-                        },
-                        "LRANGE" =>{
-                            if handlers::list::handle_lrange(&mut stream, &parts, &list_clone).await.is_err(){
-                                break;
-                            }
-                        },
-                        "LPUSH" =>{
-                            if handlers::list::handle_lpush(&mut stream, &parts, &list_clone).await.is_err(){
-                                break;
-                            }
-                        },
-                        "LLEN" =>{
-                            if handlers::list::handle_llen(&mut stream, &parts, &list_clone).await.is_err(){
-                                break;
-                            }
-                        },
-                        "BLPOP" =>{
-                            if handlers::list::handle_blpop(&mut stream, &parts, &list_clone).await.is_err(){
-                                break;
-                            }
-                        },
-                        "LPOP" =>{
-                            if handlers::list::handle_lpop(&mut stream, &parts, &list_clone).await.is_err(){
-                                break;
-                            }
-                        },
-                        "TYPE" =>{
-                            if handlers::list::handle_type(&mut stream, &parts, &store_clone, &list_clone, &stream_clone).await.is_err(){
-                                break;
-                            }
-                        },
-                        "XADD" =>{
-                            if handlers::stream::handle_xadd(&mut stream, &parts, &stream_clone, &stream_channels_clone).await.is_err(){
-                                break;
-                            }
-                        },
-                        "XRANGE" =>{
-                            if handlers::stream::handle_xrange(&mut stream, &parts, &stream_clone).await.is_err(){
-                                break;
-                            }
-                        },
-                        "XREAD" =>{
-                            if handlers::stream::handle_xread(&mut stream, &parts, &stream_clone, &stream_channels_clone).await.is_err(){
-                                break;
-                            }
-                        },
-                        "INCR" =>{
-                            if handlers::string::handle_incr(&mut stream, &parts, &store_clone).await.is_err(){
-                                break;
-                            }
-                        },
-                        "MULTI" =>{
-                            if handlers::transaction::handle_multi(&mut stream).await.is_err(){
-                                break;
-                            }
-                        },
-                        "EXEC" =>{
-                            if handlers::transaction::handle_exec(&mut stream).await.is_err(){
-                                break;
-                            }
-                        },
-                        _ => {
-                            let _ = stream.write_all(b"-ERR Invalid input").await;
+            loop {
+                let parts = match parse_command(&mut stream).await{
+                    Some(p) => p,
+                    None => break,
+                };
+                match parts[0].as_str(){
+                    "PING" => {
+                        if handlers::string::handle_ping(&mut stream).await.is_err(){
                             break;
                         }
+                    },
+                    "ECHO" => {
+                        if handlers::string::handle_echo(&mut stream, &parts).await.is_err(){
+                            break;
+                        }
+                    },
+                    "SET" => {
+                        if handlers::string::handle_set(&mut stream, &parts, &store_clone).await.is_err(){
+                            break;
+                        }
+                    },
+                    "GET" => {
+                        if handlers::string::handle_get(&mut stream, &parts, &store_clone).await.is_err(){
+                            break;
+                        }
+                    },
+                    "RPUSH" =>{
+                        if handlers::list::handle_rpush(&mut stream, &parts, &list_clone).await.is_err(){
+                            break;
+                        }
+                    },
+                    "LRANGE" =>{
+                        if handlers::list::handle_lrange(&mut stream, &parts, &list_clone).await.is_err(){
+                            break;
+                        }
+                    },
+                    "LPUSH" =>{
+                        if handlers::list::handle_lpush(&mut stream, &parts, &list_clone).await.is_err(){
+                            break;
+                        }
+                    },
+                    "LLEN" =>{
+                        if handlers::list::handle_llen(&mut stream, &parts, &list_clone).await.is_err(){
+                            break;
+                        }
+                    },
+                    "BLPOP" =>{
+                        if handlers::list::handle_blpop(&mut stream, &parts, &list_clone).await.is_err(){
+                            break;
+                        }
+                    },
+                    "LPOP" =>{
+                        if handlers::list::handle_lpop(&mut stream, &parts, &list_clone).await.is_err(){
+                            break;
+                        }
+                    },
+                    "TYPE" =>{
+                        if handlers::list::handle_type(&mut stream, &parts, &store_clone, &list_clone, &stream_clone).await.is_err(){
+                            break;
+                        }
+                    },
+                    "XADD" =>{
+                        if handlers::stream::handle_xadd(&mut stream, &parts, &stream_clone, &stream_channels_clone).await.is_err(){
+                            break;
+                        }
+                    },
+                    "XRANGE" =>{
+                        if handlers::stream::handle_xrange(&mut stream, &parts, &stream_clone).await.is_err(){
+                            break;
+                        }
+                    },
+                    "XREAD" =>{
+                        if handlers::stream::handle_xread(&mut stream, &parts, &stream_clone, &stream_channels_clone).await.is_err(){
+                            break;
+                        }
+                    },
+                    "INCR" =>{
+                        if handlers::string::handle_incr(&mut stream, &parts, &store_clone).await.is_err(){
+                            break;
+                        }
+                    },
+                    "MULTI" =>{
+                        if handlers::transaction::handle_multi(&mut stream).await.is_err(){
+                            break;
+                        }
+                    },
+                    "EXEC" =>{
+                        if handlers::transaction::handle_exec(&mut stream).await.is_err(){
+                            break;
+                        }
+                    },
+                    _ => {
+                        let _ = stream.write_all(b"-ERR Invalid input").await;
+                        break;
                     }
                 }
             }

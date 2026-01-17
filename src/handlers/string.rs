@@ -45,7 +45,7 @@ pub async fn handle_set(stream: &mut TcpStream, parts: &Vec<String>, store_clone
 }
 
 pub async fn handle_get(stream: &mut TcpStream, parts: &Vec<String>, store_clone: &Arc<Mutex<HashMap<String, (String, Option<SystemTime>)>>>)->Result<(), ()>{
-    let key = &parts[4];
+    let key = &parts[1];
     let output;
 
     let mut map = store_clone.lock().await;

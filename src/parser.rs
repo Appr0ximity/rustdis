@@ -7,7 +7,7 @@ pub async fn parse_command(stream: &mut TcpStream) -> Option<Vec<String>>{
     loop{
         let mut tmp = [0u8; 4096];
         let n = match stream.read(&mut tmp).await {
-            Ok(0) => return None,
+            Ok(0) => break,
             Ok(n) => n ,
             Err(e) => {
                 eprintln!("Error while reading from socket: {:?}", e);
@@ -20,7 +20,7 @@ pub async fn parse_command(stream: &mut TcpStream) -> Option<Vec<String>>{
         }
     }
     let input = String::from_utf8_lossy(&buffer);
-    let parts: Vec<String> = input.split("\r\n").into_iter().skip(1).step_by(2).map(|x| x.to_string()).collect();
+    let parts: Vec<String> = input.split("\r\n").into_iter().skip(2).step_by(2).map(|x| x.to_string()).collect();
     if parts.is_empty(){
         None
     }else{
