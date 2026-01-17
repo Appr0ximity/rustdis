@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc, time::{Duration, SystemTime, UNIX_EPO
 use futures::future::select_all;
 use tokio::{io::AsyncWriteExt, net::TcpStream, sync::{Mutex, broadcast}};
 
-use crate::{resp::{bulk_string, bulk_string_array, error_message, nil_array}};
+use crate::resp::{bulk_string, bulk_string_array, error_message, nil_array, simple_array};
 
 pub async fn handle_xadd(
         stream: &mut TcpStream,
@@ -22,7 +22,7 @@ pub async fn handle_xadd(
         return stream.write_all(resp_output.as_bytes()).await.map_err(|_| ());
     }
     if id_elements.len() == 2 && id_elements[0] == "0" && id_elements[1] ==  "0"{
-        output = format!("The ID specified in XADD must be greater than 0-0");
+        output = format!("ERR The ID specified in XADD must be greater than 0-0");
         let resp_output = error_message(&output);
         return stream.write_all(resp_output.as_bytes()).await.map_err(|_| ());
     }
@@ -74,14 +74,14 @@ pub async fn handle_xrange(stream: &mut TcpStream, parts: &Vec<String>, stream_c
                 stream_vec.push(bulk_string(entry_id));
                 let mut elements_vec = Vec::new();
                 for entry in entry_map{
-                    elements_vec.push(bulk_string(entry.0));
-                    elements_vec.push(bulk_string(entry.1));
+                    elements_vec.push(entry.0.to_string());
+                    elements_vec.push(entry.1.to_string());
                 }
                 stream_vec.push(bulk_string_array(&elements_vec));
-                output.push(bulk_string_array(&stream_vec));
+                output.push(simple_array(&stream_vec));
             }
         }
-        resp_array = bulk_string_array(&output);
+        resp_array = simple_array(&output);
     }
     stream.write_all(resp_array.as_bytes()).await.map_err(|_| ())
 }
@@ -131,7 +131,7 @@ pub async fn handle_xread(
 
         if let Some(streams) = streams_map.get(stream_key){
             let actual_start = if *start_id == "$"{
-                if let Some((last_id, _)) = streams.iter().rev().next(){
+                if let Some((last_id, _)) = streams.last(){
                     last_id.clone()
                 }else{
                     base_id.clone()
@@ -139,6 +139,7 @@ pub async fn handle_xread(
             }else{
                 start_id.clone()
             };
+            *start_id = actual_start.clone();
             let start_parsed = parse_stream_id(&actual_start);
             for (entry_id, entry_map) in streams{
                 let entry_parsed = parse_stream_id(entry_id);
@@ -178,11 +179,7 @@ pub async fn handle_xread(
 
 
             if let Some(streams) = streams_map.get(stream_key){
-                let actual_start = if *start_id == "$"{
-                    streams.last().map(|(id, _)| id.clone()).unwrap_or(base_id.clone())
-                }else{
-                    start_id.clone()
-                };
+                let actual_start = start_id.clone();
                 let start_parsed = parse_stream_id(&actual_start);
                 for (entry_id, entry_map) in streams{
                     let entry_parsed = parse_stream_id(entry_id);
@@ -212,7 +209,7 @@ async fn wait_for_any_receiver(mut receivers: Vec<broadcast::Receiver<()>>) {
         return;
     }
     let futures: Vec<_> = receivers.iter_mut().map(|rx| Box::pin(rx.recv())).collect();
-    let _ = select_all(futures).await;
+    let _ = select_all(futures).await.0;
 }
 
 fn get_id (id_str: &str, last_entry: Option<&(String, HashMap<String, String>)>)-> Result<String, String>{
@@ -269,16 +266,16 @@ fn xread_result_formatter(results: &Vec<(String, Vec<(&String, &HashMap<String, 
         for(entry_id, entry_map) in matching_entries{
             let mut fields_vec = Vec::new();
             for entry in *entry_map{
-                fields_vec.push(bulk_string(entry.0));
-                fields_vec.push(bulk_string(entry.1));
+                fields_vec.push(entry.0.to_string());
+                fields_vec.push(entry.1.to_string());
             }
             let entry = vec![bulk_string(entry_id), bulk_string_array(&fields_vec)];
-            entries_vec.push(bulk_string_array(&entry));
+            entries_vec.push(simple_array(&entry));
         }
-        let stream_result = vec![bulk_string(stream_key), bulk_string_array(&entries_vec)];
-        result_vec.push(bulk_string_array(&stream_result));
+        let stream_result = vec![bulk_string(&stream_key), simple_array(&entries_vec)];
+        result_vec.push(simple_array(&stream_result));
     }
-    bulk_string_array(&result_vec)
+    simple_array(&result_vec)
 }
 
 fn parse_stream_id(id: &str) -> (u128, u128) {

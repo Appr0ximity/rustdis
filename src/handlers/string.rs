@@ -15,10 +15,10 @@ pub async fn handle_ping(stream: &mut TcpStream)-> Result<(), ()>{
 
 pub async fn handle_echo(stream: &mut TcpStream, parts: &Vec<String>) -> Result<(), ()>{
     let mut output= String::new();
-    for words in parts{
+    for words in parts.iter().skip(1){
         output.push_str(&words);
     }
-    let resp_output = simple_string(&output);
+    let resp_output = bulk_string(&output);
     match stream.write_all(resp_output.as_bytes()).await {
         Ok(_) => Ok(()),
         Err(_) => Err(()),
@@ -29,8 +29,8 @@ pub async fn handle_set(stream: &mut TcpStream, parts: &Vec<String>, store_clone
     let key = parts.get(1).ok_or(())?;
     let value= parts.get(2).ok_or(())?;
 
-    if parts.len() >= 6 && parts[3].eq_ignore_ascii_case("px"){
-        let ms = parts[5].parse().map_err(|_| ())?;
+    if parts.len() >= 5 && parts[3].eq_ignore_ascii_case("px"){
+        let ms = parts[4].parse().map_err(|_| ())?;
         let mut map = store_clone.lock().await;
         let expiry = SystemTime::now() + Duration::from_millis(ms);
         map.insert(key.to_string(), (value.to_string(), Some(expiry)));

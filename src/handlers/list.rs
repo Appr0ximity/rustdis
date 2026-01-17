@@ -2,22 +2,22 @@ use std::{collections::HashMap, sync::Arc, time::{Duration, SystemTime}};
 
 use tokio::{io::AsyncWriteExt, net::TcpStream, sync::Mutex, time::sleep};
 
-use crate::resp::{bulk_string, bulk_string_array, integer, nil_array, nil_bulk, simple_string};
+use crate::resp::{bulk_string, bulk_string_array, integer, nil_array, simple_string};
 
 pub async fn handle_rpush(stream: &mut TcpStream, parts: &Vec<String>, list_clone: &Arc<Mutex<HashMap<String, Vec<String>>>>)-> Result<(), ()>{
     let mut lists_map = list_clone.lock().await;
     let mut values: Vec<String> = Vec::new();
     let length = parts.len();
-    let mut index = 6;
+    let mut index = 2;
     while index < length{
         values.push(String::from(&parts[index]));
-        index = index + 2;
+        index += 1;
     }
-    lists_map.entry(parts[4].to_string())
+    lists_map.entry(parts[1].to_string())
         .or_insert_with(Vec::new)
         .extend(values);
 
-    let output = lists_map.get(&parts[4]).unwrap().len() as i64;
+    let output = lists_map.get(&parts[1]).unwrap().len() as i64;
     let resp_output = integer(output);
     stream.write_all(resp_output.as_bytes()).await.map_err(|_|())
 }
@@ -159,7 +159,7 @@ pub async fn handle_lpop(stream: &mut TcpStream, parts: &Vec<String>, list_clone
     let resp_output ;
     if let Some(list) = lists_map.get_mut(&parts[1]){
         let mut output = Vec::new();
-        if parts.len() >= 4 && let Ok(mut iterations) = parts[3].parse::<i32>(){
+        if parts.len() >= 3 && let Ok(mut iterations) = parts[2].parse::<i32>(){
 
             while !list.is_empty()  && iterations != 0{
                 let removed = list.remove(0);
@@ -172,7 +172,7 @@ pub async fn handle_lpop(stream: &mut TcpStream, parts: &Vec<String>, list_clone
             resp_output = bulk_string(&removed);
         }
     }else{
-        resp_output = nil_bulk().to_string();
+        resp_output = nil_array().to_string();
     }
     return stream.write_all(resp_output.as_bytes()).await.map_err(|_| ());
 }
@@ -187,7 +187,7 @@ pub async fn handle_type(
     let store_map = store_clone.lock().await;
     let lists_map = list_clone.lock().await;
     let streams_map = stream_clone.lock().await;
-    let key: &str = &parts[4];
+    let key: &str = &parts[1];
     let output;
     if store_map.contains_key(key){
         output = format!("string");
