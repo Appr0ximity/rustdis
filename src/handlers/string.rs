@@ -84,7 +84,7 @@ pub async fn handle_incr(stream: &mut TcpStream, parts: &Vec<String>, store_clon
         *value = num_string;
         output = integer((num+1) as i64);
     }else{
-        store_map.insert(parts[4].to_string(), ("1".to_string(), None));
+        store_map.insert(key.to_string(), ("1".to_string(), None));
         output = integer(1 as i64);
     }
     return stream.write_all(output.as_bytes()).await.map_err(|_| ());
