@@ -31,3 +31,15 @@ pub async fn handle_exec(
     *multi_enabled = false;
     return stream.write_all(output.as_bytes()).await.map_err(|_| ());
 }
+
+pub async fn handle_discard(stream: &mut TcpStream, multi_enabled: &mut bool, queued_commands: &mut Vec<Vec<String>>)-> Result<(), ()>{
+    let output;
+    if *multi_enabled == false{
+        output = error_message("ERR DISCARD without MULTI");
+        return stream.write_all(output.as_bytes()).await.map_err(|_| ());
+    }else{
+        queued_commands.clear();
+        *multi_enabled = false;
+        return stream.write_all(simple_string("OK").as_bytes()).await.map_err(|_| ());
+    }
+}

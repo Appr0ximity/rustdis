@@ -54,6 +54,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             break;
                         }
                     },
+                    "DISCARD" =>{
+                        if handlers::transaction::handle_discard(
+                                &mut stream,
+                                &mut multi_enabled,
+                                &mut queued_commands
+                            ).await.is_err(){
+                            break;
+                        }
+                    },
                     cmd =>{
                         if multi_enabled{
                             queued_commands.push(parts.clone());
