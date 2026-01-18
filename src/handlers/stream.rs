@@ -1,16 +1,15 @@
 use std::{collections::HashMap, sync::Arc, time::{Duration, SystemTime, UNIX_EPOCH}, vec};
 
 use futures::future::select_all;
-use tokio::{io::AsyncWriteExt, net::TcpStream, sync::{Mutex, broadcast}};
+use tokio::sync::{Mutex, broadcast};
 
 use crate::resp::{bulk_string, bulk_string_array, error_message, nil_array, simple_array};
 
 pub async fn handle_xadd(
-        stream: &mut TcpStream,
         parts: &Vec<String>,
         stream_clone: &Arc<Mutex<HashMap<String, Vec<(String, HashMap<String, String>)>>>>,
         stream_channels_clone: &Arc<Mutex<HashMap<String, broadcast::Sender<()>>>>
-    )->Result<(), ()>{
+    )->String{
 
     let output;
     let stream_key = parts[1].to_string();
@@ -19,12 +18,12 @@ pub async fn handle_xadd(
     if id_elements.len() > 2 {
         output = format!("ERR Invalid ID type");
         let resp_output = error_message(&output);
-        return stream.write_all(resp_output.as_bytes()).await.map_err(|_| ());
+        return resp_output;
     }
     if id_elements.len() == 2 && id_elements[0] == "0" && id_elements[1] ==  "0"{
         output = format!("ERR The ID specified in XADD must be greater than 0-0");
         let resp_output = error_message(&output);
-        return stream.write_all(resp_output.as_bytes()).await.map_err(|_| ());
+        return resp_output;
     }
     let mut fields: HashMap<String, String> = HashMap::new();
     for i in (3..parts.len()).step_by(2){
@@ -36,7 +35,7 @@ pub async fn handle_xadd(
         Ok(id) => id,
         Err (msg) => {
             let resp_output = error_message(&msg);
-            return stream.write_all(resp_output.as_bytes()).await.map_err(|_| ())
+            return resp_output
         }
     };
 
@@ -49,14 +48,14 @@ pub async fn handle_xadd(
     }
 
     let resp = bulk_string(&actual_id);
-    stream.write_all(resp.as_bytes()).await.map_err(|_| ())
+    resp
 }
 
-pub async fn handle_xrange(stream: &mut TcpStream, parts: &Vec<String>, stream_clone: &Arc<Mutex<HashMap<String, Vec<(String, HashMap<String, String>)>>>>)-> Result<(), ()>{
+pub async fn handle_xrange(parts: &Vec<String>, stream_clone: &Arc<Mutex<HashMap<String, Vec<(String, HashMap<String, String>)>>>>)-> String{
     let mut output: Vec<String> = Vec::new();
     if parts.len() < 4{
         let resp_output = error_message("ERR Invalid Range");
-        return stream.write_all(resp_output.as_bytes()).await.map_err(|_| ())
+        return resp_output
     }
 
     let stream_key = parts[1].to_string();
@@ -83,20 +82,19 @@ pub async fn handle_xrange(stream: &mut TcpStream, parts: &Vec<String>, stream_c
         }
         resp_array = simple_array(&output);
     }
-    stream.write_all(resp_array.as_bytes()).await.map_err(|_| ())
+    resp_array
 }
 
 pub async fn handle_xread(
-        stream: &mut TcpStream,
         parts: &Vec<String>,
         stream_clone: &Arc<Mutex<HashMap<String, Vec<(String, HashMap<String, String>)>>>>,
         stream_channels_clone: &Arc<Mutex<HashMap<String, broadcast::Sender<()>>>>
-    )->Result<(), ()>{
+    )->String{
     let base_id = "0-0".to_string();
     let output ;
     if parts.len() < 4{
         output = "ERR Invalid input";
-        return stream.write_all(error_message(output).as_bytes()).await.map_err(|_| ());
+        return error_message(output);
     }
     let mut parts_idx = 1;
     let mut block_flag = false;
@@ -110,14 +108,14 @@ pub async fn handle_xread(
     }
     if parts.len() <= parts_idx || !parts[parts_idx].eq_ignore_ascii_case("streams"){
         let output = "ERR Invalid input";
-        return stream.write_all(error_message(output).as_bytes()).await.map_err(|_|());
+        return error_message(output);
     }
     parts_idx += 1;
 
     let remainings_args = parts.len() - parts_idx;
     if remainings_args % 2 != 0 || remainings_args == 0 {
         let output = "ERR Invlid input";
-        return stream.write_all(error_message(output).as_bytes()).await.map_err(|_| ());
+        return error_message(output);
     }
 
     let num_streams = remainings_args/2;
@@ -201,7 +199,7 @@ pub async fn handle_xread(
         xread_result_formatter(&all_results)
     };
 
-    stream.write_all(output.as_bytes()).await.map_err(|_| ())
+    output
 }
 
 async fn wait_for_any_receiver(mut receivers: Vec<broadcast::Receiver<()>>) {

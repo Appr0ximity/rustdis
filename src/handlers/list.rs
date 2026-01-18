@@ -1,10 +1,10 @@
 use std::{collections::HashMap, sync::Arc, time::{Duration, SystemTime}};
 
-use tokio::{io::AsyncWriteExt, net::TcpStream, sync::Mutex, time::sleep};
+use tokio::{sync::Mutex, time::sleep};
 
 use crate::resp::{bulk_string, bulk_string_array, integer, nil_array, simple_string};
 
-pub async fn handle_rpush(stream: &mut TcpStream, parts: &Vec<String>, list_clone: &Arc<Mutex<HashMap<String, Vec<String>>>>)-> Result<(), ()>{
+pub async fn handle_rpush(parts: &Vec<String>, list_clone: &Arc<Mutex<HashMap<String, Vec<String>>>>)-> String{
     let mut lists_map = list_clone.lock().await;
     let mut values: Vec<String> = Vec::new();
     let length = parts.len();
@@ -19,10 +19,10 @@ pub async fn handle_rpush(stream: &mut TcpStream, parts: &Vec<String>, list_clon
 
     let output = lists_map.get(&parts[1]).unwrap().len() as i64;
     let resp_output = integer(output);
-    stream.write_all(resp_output.as_bytes()).await.map_err(|_|())
+    resp_output
 }
 
-pub async fn handle_lrange(stream: &mut TcpStream, parts: &Vec<String>, list_clone: &Arc<Mutex<HashMap<String, Vec<String>>>>)-> Result<(), ()>{
+pub async fn handle_lrange(parts: &Vec<String>, list_clone: &Arc<Mutex<HashMap<String, Vec<String>>>>)-> String{
     let lists_map = list_clone.lock().await;
 
     let output_vec = lists_map.get(&parts[1]);
@@ -43,19 +43,19 @@ pub async fn handle_lrange(stream: &mut TcpStream, parts: &Vec<String>, list_clo
             } as usize;
             let slice = &output_vec[start_index..end_index];
             let resp_output = bulk_string_array(slice);
-            return stream.write_all(resp_output.as_bytes()).await.map_err(|_|())
+            return resp_output
         },
         None => {
             let output = [];
             let resp_output = bulk_string_array(&output);
-            return stream.write_all(resp_output.as_bytes()).await.map_err(|_|())
+            return resp_output
         }
     }
 }
 
-pub async fn handle_lpush(stream: &mut TcpStream, parts: &Vec<String>, list_clone: &Arc<Mutex<HashMap<String, Vec<String>>>>)-> Result<(), ()>{
-    let key = parts.get(1).ok_or(())?;
-    let values = parts.get(2..).ok_or(())?;
+pub async fn handle_lpush(parts: &Vec<String>, list_clone: &Arc<Mutex<HashMap<String, Vec<String>>>>)-> String{
+    let key = parts.get(1).unwrap();
+    let values = parts.get(2..).unwrap();
     let mut lists_map = list_clone.lock().await;
     let list = lists_map.entry(key.clone()).or_insert_with(Vec::new);
 
@@ -63,21 +63,21 @@ pub async fn handle_lpush(stream: &mut TcpStream, parts: &Vec<String>, list_clon
         list.insert(0, value.to_string());
     }
     let resp_output = integer(lists_map.get(&parts[1]).unwrap().len() as i64);
-    stream.write_all(resp_output.as_bytes()).await.map_err(|_|())
+    resp_output
 }
 
-pub async fn handle_llen(stream: &mut TcpStream, parts: &Vec<String>, list_clone: &Arc<Mutex<HashMap<String, Vec<String>>>>)-> Result<(), ()>{
+pub async fn handle_llen(parts: &Vec<String>, list_clone: &Arc<Mutex<HashMap<String, Vec<String>>>>)-> String{
     let lists_map = list_clone.lock().await;
     if let Some(list) = lists_map.get(&parts[1]){
         let resp_output = integer(list.len() as i64);
-        return stream.write_all(resp_output.as_bytes()).await.map_err(|_|());
+        return resp_output;
     }else{
         let resp_output = integer(0);
-        return stream.write_all(resp_output.as_bytes()).await.map_err(|_|());
+        return resp_output;
     }
 }
 
-pub async fn handle_blpop(stream: &mut TcpStream, parts: &Vec<String>, list_clone: &Arc<Mutex<HashMap<String, Vec<String>>>>)-> Result<(), ()>{
+pub async fn handle_blpop(parts: &Vec<String>, list_clone: &Arc<Mutex<HashMap<String, Vec<String>>>>)-> String{
     let key = parts[1].to_string();
     if let Ok(timeout) = parts[2].parse::<f64>(){
         if timeout == 0.0 {
@@ -89,7 +89,7 @@ pub async fn handle_blpop(stream: &mut TcpStream, parts: &Vec<String>, list_clon
                     drop(lists_map);
                     output = [key, removed];
                     let resp_output = bulk_string_array(&output);
-                    return stream.write_all(resp_output.as_bytes()).await.map_err(|_| ());
+                    return resp_output
                 }else{
                     drop(lists_map);
                     loop{
@@ -100,7 +100,7 @@ pub async fn handle_blpop(stream: &mut TcpStream, parts: &Vec<String>, list_clon
                             drop(lists_map);
                             output = [key.clone(), removed];
                             let resp_output = bulk_string_array(&output);
-                            return stream.write_all(resp_output.as_bytes()).await.map_err(|_| ());
+                            return resp_output
                         }
                         drop(lists_map);
                     }
@@ -115,7 +115,7 @@ pub async fn handle_blpop(stream: &mut TcpStream, parts: &Vec<String>, list_clon
                         drop(lists_map);
                         output = [key.clone(), removed];
                         let resp_output = bulk_string_array(&output);
-                        return stream.write_all(resp_output.as_bytes()).await.map_err(|_| ());
+                        return resp_output
                     }
                     drop(lists_map);
                 }
@@ -144,17 +144,17 @@ pub async fn handle_blpop(stream: &mut TcpStream, parts: &Vec<String>, list_clon
             }
             
             if !found {
-                return stream.write_all(nil_array().as_bytes()).await.map_err(|_| ());
+                return nil_array().to_string()
             }else{
-                return stream.write_all(resp_output.as_bytes()).await.map_err(|_| ());
+                return resp_output
             }
         }
     }else{
-        return stream.write_all(nil_array().as_bytes()).await.map_err(|_| ());
+        return nil_array().to_string()
     }
 }
 
-pub async fn handle_lpop(stream: &mut TcpStream, parts: &Vec<String>, list_clone: &Arc<Mutex<HashMap<String, Vec<String>>>>)-> Result<(),()>{
+pub async fn handle_lpop(parts: &Vec<String>, list_clone: &Arc<Mutex<HashMap<String, Vec<String>>>>)-> String{
     let mut lists_map = list_clone.lock().await;
     let resp_output ;
     if let Some(list) = lists_map.get_mut(&parts[1]){
@@ -174,16 +174,15 @@ pub async fn handle_lpop(stream: &mut TcpStream, parts: &Vec<String>, list_clone
     }else{
         resp_output = nil_array().to_string();
     }
-    return stream.write_all(resp_output.as_bytes()).await.map_err(|_| ());
+    return resp_output
 }
 
 pub async fn handle_type(
-        stream: &mut TcpStream,
         parts: &Vec<String>,
         store_clone: &Arc<Mutex<HashMap<String, (String, Option<SystemTime>)>>>,
         list_clone: &Arc<Mutex<HashMap<String, Vec<String>>>>,
         stream_clone: &Arc<Mutex<HashMap<String, Vec<(String, HashMap<String, String>)>>>>
-    ) -> Result<(), ()> {
+    ) -> String {
     let store_map = store_clone.lock().await;
     let lists_map = list_clone.lock().await;
     let streams_map = stream_clone.lock().await;
@@ -199,5 +198,5 @@ pub async fn handle_type(
         output = format!("none");
     }
     let resp_output = simple_string(&output);
-    return stream.write_all(resp_output.as_bytes()).await.map_err(|_| ());
+    return resp_output
 }

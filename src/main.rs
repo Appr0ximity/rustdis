@@ -30,7 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     None => break,
                 };
                 match parts[0].as_str(){
-                    "MULTI" =>{
+                    "MULTI"=>{
                         if multi_enabled{
                             let _ = stream.write_all(error_message("ERR MULTI calls can not be nested").as_bytes()).await;
                             continue;
@@ -42,100 +42,91 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     },
                     "EXEC" =>{
-                        if handlers::transaction::handle_exec(&mut stream, &mut multi_enabled).await.is_err(){
+                        if handlers::transaction::handle_exec(
+                                &mut stream,
+                                &mut multi_enabled,
+                                &mut queued_commands,
+                                &store_clone,
+                                &list_clone,
+                                &stream_clone,
+                                &stream_channels_clone
+                            ).await.is_err(){
                             break;
                         }
                     },
                     cmd =>{
                         if multi_enabled{
-                            queued_commands.push(parts);
+                            queued_commands.push(parts.clone());
                             let _ = stream.write_all(simple_string("QUEUED").as_bytes()).await;
                             continue;
                         }
-                        match cmd{
-                            "PING" =>{
-                                if handlers::string::handle_ping(&mut stream).await.is_err(){
-                                    break;
-                                }
-                            },
-                            "ECHO" =>{
-                                if handlers::string::handle_echo(&mut stream, &parts).await.is_err(){
-                                    break;
-                                }
-                            },
-                            "SET" =>{
-                                if handlers::string::handle_set(&mut stream, &parts, &store_clone).await.is_err(){
-                                    break;
-                                }
-                            },
-                            "GET" =>{
-                                if handlers::string::handle_get(&mut stream, &parts, &store_clone).await.is_err(){
-                                    break;
-                                }
-                            },
-                            "RPUSH" =>{
-                                if handlers::list::handle_rpush(&mut stream, &parts, &list_clone).await.is_err(){
-                                    break;
-                                }
-                            },
-                            "LRANGE" =>{
-                                if handlers::list::handle_lrange(&mut stream, &parts, &list_clone).await.is_err(){
-                                    break;
-                                }
-                            },
-                            "LPUSH" =>{
-                                if handlers::list::handle_lpush(&mut stream, &parts, &list_clone).await.is_err(){
-                                    break;
-                                }
-                            },
-                            "LLEN" =>{
-                                if handlers::list::handle_llen(&mut stream, &parts, &list_clone).await.is_err(){
-                                    break;
-                                }
-                            },
-                            "BLPOP" =>{
-                                if handlers::list::handle_blpop(&mut stream, &parts, &list_clone).await.is_err(){
-                                    break;
-                                }
-                            },
-                            "LPOP" =>{
-                                if handlers::list::handle_lpop(&mut stream, &parts, &list_clone).await.is_err(){
-                                    break;
-                                }
-                            },
-                            "TYPE" =>{
-                                if handlers::list::handle_type(&mut stream, &parts, &store_clone, &list_clone, &stream_clone).await.is_err(){
-                                    break;
-                                }
-                            },
-                            "XADD" =>{
-                                if handlers::stream::handle_xadd(&mut stream, &parts, &stream_clone, &stream_channels_clone).await.is_err(){
-                                    break;
-                                }
-                            },
-                            "XRANGE" =>{
-                                if handlers::stream::handle_xrange(&mut stream, &parts, &stream_clone).await.is_err(){
-                                    break;
-                                }
-                            },
-                            "XREAD" =>{
-                                if handlers::stream::handle_xread(&mut stream, &parts, &stream_clone, &stream_channels_clone).await.is_err(){
-                                    break;
-                                }
-                            },
-                            "INCR" =>{
-                                if handlers::string::handle_incr(&mut stream, &parts, &store_clone).await.is_err(){
-                                    break;
-                                }
-                            },
-                            _ => {
-                                let _ = stream.write_all(b"-ERR Invalid input").await;
-                                break;
-                            }
-                        }
+                        let command = cmd;
+                        let result: String = run_command(&command, &parts, &store_clone, &list_clone, &stream_clone, &stream_channels_clone).await;
+                        let _ = stream.write_all(result.as_bytes()).await;
+                        continue;
                     }
                 }
             }
         });
+    }
+}
+
+pub async fn run_command(
+        command: &str,
+        parts: &Vec<String>,
+        store_clone: &Arc<Mutex<HashMap<String, (String, Option<SystemTime>)>>>,
+        list_clone: &Arc<Mutex<HashMap<String, Vec<String>>>>,
+        stream_clone: &Arc<Mutex<HashMap<String, Vec<(String, HashMap<String, String>)>>>>,
+        stream_channels_clone: &Arc<Mutex<HashMap<String, broadcast::Sender<()>>>>
+    )-> String{
+    match command{
+        "PING" =>{
+            handlers::string::handle_ping().await
+        },
+        "ECHO" =>{
+            handlers::string::handle_echo(parts).await
+        },
+        "SET" =>{
+            handlers::string::handle_set(parts, store_clone).await
+        },
+        "GET" =>{
+            handlers::string::handle_get(parts, store_clone).await
+        },
+        "RPUSH" =>{
+            handlers::list::handle_rpush(parts, list_clone).await
+        },
+        "LRANGE" =>{
+            handlers::list::handle_lrange(parts, list_clone).await
+        },
+        "LPUSH" =>{
+            handlers::list::handle_lpush(parts, list_clone).await
+        },
+        "LLEN" =>{
+            handlers::list::handle_llen(parts, list_clone).await
+        },
+        "BLPOP" =>{
+            handlers::list::handle_blpop(parts, list_clone).await
+        },
+        "LPOP" =>{
+            handlers::list::handle_lpop(parts, list_clone).await
+        },
+        "TYPE" =>{
+            handlers::list::handle_type(parts, store_clone, list_clone, stream_clone).await
+        },
+        "XADD" =>{
+            handlers::stream::handle_xadd(parts, stream_clone, stream_channels_clone).await
+        },
+        "XRANGE" =>{
+            handlers::stream::handle_xrange(parts, stream_clone).await
+        },
+        "XREAD" =>{
+            handlers::stream::handle_xread(parts, stream_clone, stream_channels_clone).await
+        },
+        "INCR" =>{
+            handlers::string::handle_incr(parts, store_clone).await
+        },
+        _ => {
+            "ERR Invalid input".to_string()
+        }
     }
 }
