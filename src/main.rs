@@ -1,7 +1,7 @@
-use std::{collections::HashMap, sync::Arc, time::SystemTime};
-use tokio::{io::AsyncWriteExt, net::TcpListener, sync::{Mutex, broadcast}};
+use std::{collections::HashMap, env, sync::Arc, time::SystemTime};
+use tokio::{io::AsyncWriteExt, net::{TcpListener, TcpStream}, sync::{Mutex, broadcast}};
 
-use crate::{parser::parse_command, resp::{error_message, simple_string}};
+use crate::{parser::parse_command, resp::{bulk_string_array, error_message, simple_string}};
 
 mod parser;
 mod handlers;
@@ -9,18 +9,45 @@ mod resp;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut port: u32 = 6379;
+    let mut replica_of  = String::new();
     println!("Logs from your program will appear here!");
+    let args: Vec<String> = env::args().collect();
+    for (i,arg) in args.iter().enumerate(){
+        if arg == "--port" && args.len()> i+1{
+            port = args[i+1].parse::<u32>().unwrap();
+        }
+        if arg == "--replicaof" && args.len() > i + 1{
+            replica_of = args[i+1].to_string();
+        }
+    }
+    let server_info: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap:: new()));
+    {
+        let mut info = server_info.lock().await;
+        info.insert("port".to_string(), port.to_string());
+        if !replica_of.is_empty(){
+            info.insert("replicaof".to_string(), replica_of.to_string());
+        }
+        info.insert("master_replid".to_string(),"8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string());
+        info.insert("master_repl_offset".to_string(), "0".to_string());
+    }
     let store: Arc<Mutex<HashMap<String, (String, Option<SystemTime>)>>> = Arc::new(Mutex::new(HashMap::new()));
     let lists: Arc<Mutex<HashMap<String, Vec<String>>>> = Arc::new(Mutex::new(HashMap::new()));
     let streams: Arc<Mutex<HashMap<String, Vec<(String, HashMap<String, String>)>>>> = Arc::new(Mutex::new(HashMap::new()));
     let stream_channels:Arc<Mutex<HashMap<String, broadcast::Sender<()>>>> = Arc::new(Mutex::new(HashMap::new()));
-    let listener = TcpListener::bind("127.0.0.1:6379").await?;
+    if !replica_of.is_empty(){
+        if let Err(e) = connect_to_master(&replica_of).await{
+            eprintln!("Failed to conenct to master {}: {}", replica_of, e);
+        }
+    }
+    let listener = TcpListener::bind(format!("127.0.0.1:{}", port)).await?;
     loop{
         let (mut stream, _)  = listener.accept().await?;
         let store_clone = store.clone();
         let list_clone = lists.clone();
         let stream_clone= streams.clone();
         let stream_channels_clone = stream_channels.clone();
+        let server_info_clone = server_info.clone();
         tokio::spawn(async move {
             let mut multi_enabled = false;
             let mut queued_commands: Vec<Vec<String>> = Vec::new();
@@ -49,7 +76,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 &store_clone,
                                 &list_clone,
                                 &stream_clone,
-                                &stream_channels_clone
+                                &stream_channels_clone,
+                                &server_info_clone
                             ).await.is_err(){
                             break;
                         }
@@ -70,7 +98,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             continue;
                         }
                         let command = cmd;
-                        let result: String = run_command(&command, &parts, &store_clone, &list_clone, &stream_clone, &stream_channels_clone).await;
+                        let result: String = run_command(&command, &parts, &store_clone, &list_clone, &stream_clone, &stream_channels_clone, &server_info_clone).await;
                         let _ = stream.write_all(result.as_bytes()).await;
                         continue;
                     }
@@ -86,7 +114,8 @@ pub async fn run_command(
         store_clone: &Arc<Mutex<HashMap<String, (String, Option<SystemTime>)>>>,
         list_clone: &Arc<Mutex<HashMap<String, Vec<String>>>>,
         stream_clone: &Arc<Mutex<HashMap<String, Vec<(String, HashMap<String, String>)>>>>,
-        stream_channels_clone: &Arc<Mutex<HashMap<String, broadcast::Sender<()>>>>
+        stream_channels_clone: &Arc<Mutex<HashMap<String, broadcast::Sender<()>>>>,
+        server_info_clone: &Arc<Mutex<HashMap<String, String>>>
     )-> String{
     match command{
         "PING" =>{
@@ -134,8 +163,22 @@ pub async fn run_command(
         "INCR" =>{
             handlers::string::handle_incr(parts, store_clone).await
         },
+        "INFO" =>{
+            handlers::info::handle_info(&server_info_clone, parts).await
+        },
         _ => {
             "ERR Invalid input".to_string()
         }
     }
+}
+
+async fn connect_to_master(replica_of: &str)-> Result<(), Box<dyn std::error::Error>>{
+    let parts: Vec<&str> = replica_of.split_whitespace().collect();
+    let host = parts[0];
+    let master_port = parts[1];
+    let mut master_stream = TcpStream::connect(format!("{}:{}", host, master_port)).await?;
+    let ping_cmd = bulk_string_array(&vec!["PING".to_string()]);
+
+    let _ = master_stream.write_all(ping_cmd.as_bytes()).await?;
+    Ok(())
 }

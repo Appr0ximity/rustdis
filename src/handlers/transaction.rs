@@ -1,4 +1,6 @@
-use tokio::{io::AsyncWriteExt, net::TcpStream};
+use std::{collections::HashMap, sync::Arc};
+
+use tokio::{io::AsyncWriteExt, net::TcpStream, sync::{Mutex, broadcast}};
 
 use crate::{resp::{error_message, simple_array, simple_string}, run_command};
 
@@ -11,10 +13,11 @@ pub async fn handle_exec(
         stream: &mut TcpStream,
         multi_enabled: &mut bool,
         queued_commands: &mut Vec<Vec<String>>,
-        store_clone: &std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, (String, Option<std::time::SystemTime>)>>>,
-        list_clone: &std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, Vec<String>>>>,
-        stream_clone: &std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, Vec<(String, std::collections::HashMap<String, String>)>>>>,
-        stream_channels_clone: &std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::sync::broadcast::Sender<()>>>>
+        store_clone: &Arc<Mutex<std::collections::HashMap<String, (String, Option<std::time::SystemTime>)>>>,
+        list_clone: &Arc<Mutex<std::collections::HashMap<String, Vec<String>>>>,
+        stream_clone: &Arc<Mutex<std::collections::HashMap<String, Vec<(String, std::collections::HashMap<String, String>)>>>>,
+        stream_channels_clone: &Arc<Mutex<std::collections::HashMap<String, broadcast::Sender<()>>>>,
+        server_info_clone: &Arc<Mutex<HashMap<String, String>>>
     ) -> Result<(), ()>{
     let output ;
     if *multi_enabled == false{
@@ -24,7 +27,7 @@ pub async fn handle_exec(
     let mut output_vec: Vec<String> = Vec::new();
     for queued_command in queued_commands.iter(){
         let cmd = queued_command.get(0).unwrap();
-        output_vec.push(run_command(cmd, queued_command, store_clone, list_clone, stream_clone, stream_channels_clone).await);
+        output_vec.push(run_command(cmd, queued_command, store_clone, list_clone, stream_clone, stream_channels_clone, server_info_clone).await);
     }
     queued_commands.clear();
     output = simple_array(&output_vec);
