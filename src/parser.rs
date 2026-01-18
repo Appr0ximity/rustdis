@@ -31,8 +31,11 @@ pub async fn parse_command(stream: &mut TcpStream) -> Option<Vec<String>>{
 fn buffer_is_complete(buffer: &[u8]) -> bool {
     let temp_input = String::from_utf8_lossy(&buffer);
     let parts: Vec<&str> = temp_input.split("\r\n").collect();
-    if parts.is_empty() || !parts[0].starts_with('*'){
+    if parts.is_empty() || !(parts[0].starts_with('*') || parts[0].starts_with('+')){
         return false;
+    }
+    if parts[0].starts_with('+'){
+        return true;
     }
     if let Ok(num) = parts[0][1..].parse::<usize>(){
         return parts.len() == (num+1)*2

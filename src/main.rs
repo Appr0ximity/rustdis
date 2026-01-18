@@ -36,9 +36,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let streams: Arc<Mutex<HashMap<String, Vec<(String, HashMap<String, String>)>>>> = Arc::new(Mutex::new(HashMap::new()));
     let stream_channels:Arc<Mutex<HashMap<String, broadcast::Sender<()>>>> = Arc::new(Mutex::new(HashMap::new()));
     if !replica_of.is_empty(){
-        if let Err(e) = connect_to_master(&replica_of).await{
-            eprintln!("Failed to conenct to master {}: {}", replica_of, e);
-        }
+        let replica_port = port.clone();
+        tokio::spawn(async move{
+            let _ = connect_to_master(&replica_of, &replica_port).await;
+        });
     }
     let listener = TcpListener::bind(format!("127.0.0.1:{}", port)).await?;
     loop{
@@ -166,19 +167,34 @@ pub async fn run_command(
         "INFO" =>{
             handlers::info::handle_info(&server_info_clone, parts).await
         },
+        "REPLCONF" =>{
+            handlers::replication::handle_replconf().await
+        },
         _ => {
             "ERR Invalid input".to_string()
         }
     }
 }
 
-async fn connect_to_master(replica_of: &str)-> Result<(), Box<dyn std::error::Error>>{
+
+use tokio::io::{AsyncReadExt};
+
+async fn connect_to_master(replica_of: &str, port: &u32) -> Result<(), Box<dyn std::error::Error>> {
     let parts: Vec<&str> = replica_of.split_whitespace().collect();
     let host = parts[0];
     let master_port = parts[1];
     let mut master_stream = TcpStream::connect(format!("{}:{}", host, master_port)).await?;
     let ping_cmd = bulk_string_array(&vec!["PING".to_string()]);
-
-    let _ = master_stream.write_all(ping_cmd.as_bytes()).await?;
+    master_stream.write_all(ping_cmd.as_bytes()).await?;
+    let mut buf = [0u8; 1024];
+    let _ = master_stream.read(&mut buf).await;
+    let cmd = bulk_string_array(&vec!["REPLCONF".to_string(), "listening-port".to_string(), port.to_string()]);
+    master_stream.write_all(cmd.as_bytes()).await?;
+    let _ = master_stream.read(&mut buf).await;
+    let cmd = bulk_string_array(&vec!["REPLCONF".to_string(), "capa".to_string(), "psync".to_string()]);
+    master_stream.write_all(cmd.as_bytes()).await?;
+    let _ = master_stream.read(&mut buf).await;
     Ok(())
 }
+
+
