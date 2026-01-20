@@ -170,6 +170,9 @@ pub async fn run_command(
         "REPLCONF" =>{
             handlers::replication::handle_replconf().await
         },
+        "PSYNC" =>{
+            handlers::replication::handle_psync(&server_info_clone).await
+        },
         _ => {
             "ERR Invalid input".to_string()
         }
@@ -192,6 +195,9 @@ async fn connect_to_master(replica_of: &str, port: &u32) -> Result<(), Box<dyn s
     master_stream.write_all(cmd.as_bytes()).await?;
     let _ = master_stream.read(&mut buf).await;
     let cmd = bulk_string_array(&vec!["REPLCONF".to_string(), "capa".to_string(), "psync".to_string()]);
+    master_stream.write_all(cmd.as_bytes()).await?;
+    let _ = master_stream.read(&mut buf).await;
+    let cmd = bulk_string_array(&vec!["PSYNC".to_string(), "?".to_string(), "-1".to_string()]);
     master_stream.write_all(cmd.as_bytes()).await?;
     let _ = master_stream.read(&mut buf).await;
     Ok(())
